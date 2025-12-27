@@ -117,7 +117,7 @@ class MusicCard:
                         "title": f"{song['title']} ({song['subtitle']})" if song['subtitle'] and len(
                             song['subtitle']) else song['title'],
                         "artist": " / ".join([singer['name'] for singer in song['singer']]),
-                        "cover_url": f"https://y.qq.com/music/photo_new/T002R800x800M000{song['album']['mid']}.jpg",
+                        "cover_url": f"https://y.qq.com/music/photo_new/T002R1200x1200M000{song['album']['mid']}.jpg",
                         "music_id": music_id
                     }
         except Exception as e:
