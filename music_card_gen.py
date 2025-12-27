@@ -13,8 +13,10 @@ from PIL import Image, ImageDraw, ImageFont, ImageFilter, ImageOps, ImageEnhance
 
 
 class MusicCard:
-    def __init__(self, font_path: str):
+    def __init__(self, font_path: str, platform: str = "ncm"):
         self.font_path = font_path
+        self.platform = platform
+
         # 布局常量
         self.W = 1000
         self.MARGIN_TOP = 40
@@ -396,7 +398,7 @@ class MusicCard:
 
         # 二维码 (头部右侧)
         if show_qrcode and music_id:
-            song_url = f"https://music.163.com/#/song?id={music_id}"
+            song_url = f"https://music.163.com/#/song?id={music_id}" if self.platform == "ncm" else f"https://y.qq.com/n/ryqq_v2/songDetail/{music_id}"
             safe_qr_color = self.get_safe_qr_color(theme_rgb)
             qr_img = self.generate_styled_qrcode(song_url, safe_qr_color, size=QR_SIZE)
             bg_img.paste(qr_img,
@@ -493,7 +495,7 @@ async def generate_music_card_process(
     逻辑控制中心：根据优先级获取数据并调用绘图
     优先级：每日推荐 API > 命令行 MUSIC ID > 命令行手动 Info
     """
-    card_gen = MusicCard(font_path)
+    card_gen = MusicCard(font_path, platform)
     final_data = {}
 
     # 初始化日期对象
@@ -575,7 +577,7 @@ async def generate_music_card_process(
 
 async def main():
     parser = argparse.ArgumentParser(description="生成仿网易云音乐风格的音乐卡片")
-    parser.add_argument("--platform", type=str, choices=["ncm", "qq"], help="获取歌曲的平台 ncm/qq", required=True)
+    parser.add_argument("--platform", type=str, choices=["ncm", "qq"], default="ncm", help="获取歌曲的平台 ncm/qq")
     parser.add_argument("--date", type=str, default=datetime.now().strftime("%Y-%m-%d"), help="日期 YYYY-MM-DD")
     parser.add_argument("--info", nargs=3, metavar=('TITLE', 'ARTIST', 'COVER_URL'), help="手动指定歌曲信息")
     parser.add_argument("--quote", nargs=2, metavar=('CONTENT', 'SOURCE'), help="引言内容与来源")
@@ -583,7 +585,7 @@ async def main():
     parser.add_argument("--qrcode", action="store_true", help="生成二维码")
     parser.add_argument("--card-only", action="store_true", help="仅生成卡片模式(移除日期与引言)")
     parser.add_argument("--qq-music-cookie", type=str, help="QQ 音乐 Cookie")
-    parser.add_argument("music_id", metavar='music-id', type=str, help="歌曲 ID")
+    parser.add_argument("--music-id", type=str, help="歌曲 ID")
 
     args = parser.parse_args()
 
