@@ -7,16 +7,13 @@
 在命令行直接调用：
 
 ```
-usage: music_card_gen.py [-h] --platform {ncm,qq} [--date DATE]
+usage: music_card_gen.py [-h] [--platform {ncm,qq}] [--date DATE]
                          [--info TITLE ARTIST COVER_URL]
                          [--quote CONTENT SOURCE] [--inner-blurred] [--qrcode]
                          [--card-only] [--qq-music-cookie QQ_MUSIC_COOKIE]
-                         music-id
+                         [--music-id MUSIC_ID]
 
 生成仿网易云音乐风格的音乐卡片
-
-positional arguments:
-  music-id              歌曲 ID
 
 options:
   -h, --help            show this help message and exit
@@ -31,6 +28,7 @@ options:
   --card-only           仅生成卡片模式(移除日期与引言)
   --qq-music-cookie QQ_MUSIC_COOKIE
                         QQ 音乐 Cookie
+  --music-id MUSIC_ID   歌曲 ID
 ```
 
 在其他 Python 脚本中调用（确保 `music_card_gen.py` 在同目录）：
