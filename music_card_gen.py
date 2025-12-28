@@ -2,6 +2,7 @@ import argparse
 import asyncio
 import calendar
 import json
+import re
 import sys
 from datetime import datetime
 from io import BytesIO
@@ -239,26 +240,82 @@ class MusicCard:
 
     @staticmethod
     def create_rounded_mask(size, radius):
-        mask = Image.new("L", size, 0)
-        ImageDraw.Draw(mask).rounded_rectangle((0, 0) + size, radius=radius, fill=255)
-        return mask
+        """
+        [改进] 创建带抗锯齿效果的圆角蒙版。
+        """
+        # 1. 超采样：定义一个放大倍数，2倍、4倍或更高
+        upscale_factor = 8
+
+        # 2. 创建一个放大 upscale_factor 倍的画布
+        scaled_size = (size[0] * upscale_factor, size[1] * upscale_factor)
+        scaled_radius = radius * upscale_factor
+
+        # 3. 在这个大画布上绘制圆角矩形
+        mask = Image.new("L", scaled_size, 0)
+        draw = ImageDraw.Draw(mask)
+        draw.rounded_rectangle(
+            (0, 0) + scaled_size,
+            radius=scaled_radius,
+            fill=255
+        )
+
+        # 4. 将大图像高质量地缩小回原始尺寸
+        #    Image.Resampling.LANCZOS 是高质量的缩小算法，能产生平滑的边缘
+        return mask.resize(size, Image.Resampling.LANCZOS)
 
     # --- 布局与绘制 ---
 
     def _process_text_wrapping(self, draw, text, font, max_width):
+        """
+        [重构] 智能换行方法，优先在单词间换行。
+        """
         final_lines = []
         for paragraph in text.split('\n'):
             if not paragraph:
                 final_lines.append("")
                 continue
-            curr = ""
-            for char in paragraph:
-                if draw.textlength(curr + char, font=font) <= max_width:
-                    curr += char
+
+            words = paragraph.split(' ')
+            current_line = ""
+
+            for i, word in enumerate(words):
+                # --- 处理单个单词超长的情况 ---
+                if draw.textlength(word, font=font) > max_width:
+                    # 如果当前行有内容，先将其提交
+                    if current_line:
+                        final_lines.append(current_line)
+                        current_line = ""
+
+                    # 对超长单词进行强制字符级换行
+                    temp_chunk = ""
+                    for char in word:
+                        if draw.textlength(temp_chunk + char, font=font) <= max_width:
+                            temp_chunk += char
+                        else:
+                            final_lines.append(temp_chunk)
+                            temp_chunk = char
+
+                    # 超长单词被分割后的剩余部分，成为新行的开头
+                    if temp_chunk:
+                        current_line = temp_chunk
+                    continue
+
+                # --- 正常的单词拼接逻辑 ---
+                separator = " " if current_line else ""
+                test_line = current_line + separator + word
+
+                if draw.textlength(test_line, font=font) <= max_width:
+                    current_line = test_line
                 else:
-                    final_lines.append(curr)
-                    curr = char
-            if curr: final_lines.append(curr)
+                    # 当前单词无法加入，提交上一行
+                    final_lines.append(current_line)
+                    # 新单词成为新行的开头
+                    current_line = word
+
+            # 循环结束后，提交最后一行
+            if current_line:
+                final_lines.append(current_line)
+
         bbox = font.getbbox("高")
         return final_lines, bbox[3] - bbox[1]
 
@@ -427,9 +484,67 @@ class MusicCard:
 
             # 引言
             q_curr_y = mid_y + 5
-            for line in q_lines:
-                draw.text((q_x, q_curr_y), line, font=font_quote, fill=self.C_QUOTE)
-                q_curr_y += q_font_h * 1.6
+            # 获取默认字体的行高
+            q_bbox = font_quote.getbbox("高")
+            q_font_h = q_bbox[3] - q_bbox[1]
+
+            # 逐行处理原始引言文本
+            for raw_line in quote_content.split('\n'):
+                # 匹配对齐标记
+                match = re.match(r'^\[([:_-]+)\](.*)', raw_line.strip())
+
+                if match:
+                    # --- 情况 A: 行首有对齐标记 ---
+                    spec, text_content = match.groups()
+                    text_content = text_content.strip()
+
+                    # 1. 确定字体
+                    use_small_font = '_' in spec
+                    font_size = int(font_quote.size * 0.8) if use_small_font else font_quote.size
+                    target_font = ImageFont.truetype(self.font_path, font_size) if use_small_font else font_quote
+                    target_bbox = target_font.getbbox("高")
+                    target_font_h = target_bbox[3] - target_bbox[1]
+
+                    # 2. 确定对齐方式
+                    norm_spec = spec.replace('_', '-')
+                    align = "left"  # 默认为左对齐
+                    if ":-:" in norm_spec:
+                        align = "center"
+                    elif "-:" in norm_spec:
+                        align = "right"
+
+                    # 3. 文本换行 (使用 80% 宽度)
+                    wrap_width = q_max_w * 0.8
+                    margin_w = q_max_w * 0.1
+                    wrapped_sub_lines, _ = self._process_text_wrapping(draw, text_content, target_font, wrap_width)
+
+                    # 4. 绘制换行后的每一行
+                    for sub_line in wrapped_sub_lines:
+                        sub_line_width = draw.textlength(sub_line, font=target_font)
+
+                        x_pos = q_x  # 默认是 `:-` (左对齐)
+                        if align == "center":  # `:-:` (居中)
+                            x_pos = (q_x + margin_w) + (wrap_width - sub_line_width) / 2
+                        elif align == "right":  # `-:` (右对齐)
+                            # 对齐到整个可用区域的右侧
+                            x_pos = (q_x + q_max_w) - sub_line_width
+
+                        draw.text((x_pos, q_curr_y), sub_line, font=target_font, fill=self.C_QUOTE)
+                        q_curr_y += target_font_h * 1.6
+
+                else:
+                    # --- 情况 B: 普通行 (默认行为) ---
+                    if not raw_line:  # 处理空行
+                        q_curr_y += q_font_h * 1.6
+                        continue
+
+                    # 1. 文本换行 (使用 100% 宽度)
+                    wrapped_sub_lines, _ = self._process_text_wrapping(draw, raw_line, font_quote, q_max_w)
+
+                    # 2. 绘制换行后的每一行
+                    for sub_line in wrapped_sub_lines:
+                        draw.text((q_x, q_curr_y), sub_line, font=font_quote, fill=self.C_QUOTE)
+                        q_curr_y += q_font_h * 1.6
 
             # 装饰引号
             deco_x = self.CONTENT_RIGHT_X - 80
