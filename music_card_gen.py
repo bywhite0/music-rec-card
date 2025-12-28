@@ -337,8 +337,13 @@ class MusicCard:
                     if draw.textlength(current_line + char, font=font) <= max_width:
                         current_line += char
                     else:
-                        final_lines.append(current_line)
-                        current_line = char
+                        if ' ' in current_line:
+                            final_lines.append(current_line[:current_line.rindex(' ')])
+                            current_line = current_line[current_line.rindex(' ') + 1:]
+                            current_line += char
+                        else:
+                            final_lines.append(current_line)
+                            current_line = char
                 if current_line:
                     final_lines.append(current_line)
             else:
@@ -454,30 +459,51 @@ class MusicCard:
                 header_section_h = header_h_real
                 middle_h = 0
                 footer_inner_h = 60
-            case self.DAILY:
-                header_section_h = header_h_real + 30 + 4 + 40  # + padding + line + padding
-
-                # 中间区域 (日期 & 引言)
-                q_x = self.CONTENT_LEFT_X + 240
-                q_max_w = self.CONTENT_RIGHT_X - q_x
-                q_lines, q_font_h = self._process_text_wrapping(temp_draw, quote_content, font_quote, q_max_w)
-                q_h = (len(q_lines) * q_font_h * 1.6) + 40 + 30  # + deco + padding
-                middle_h = max(200, q_h)
-
-                # 底部
-                footer_inner_h = 20 + 20 + 32 + 25
-            case self.LYRIC:
+            case self.DAILY | self.LYRIC:
                 header_section_h = header_h_real + 30 + 4 + 40  # + padding + line + padding
 
                 # 中间区域 (日期 & 引言)
                 q_x = self.CONTENT_LEFT_X
+                if mode == self.DAILY:
+                    q_x += 240
                 q_max_w = self.CONTENT_RIGHT_X - q_x
-                q_lines, q_font_h = self._process_text_wrapping(temp_draw, quote_content, font_quote, q_max_w)
-                q_h = (len(q_lines) * q_font_h * 1.6) + 40 + 30  # + deco + padding
-                middle_h = max(200, q_h)
 
-                # 底部
-                footer_inner_h = 20 + 20 + 32 + 25
+                # -- 精确计算引言/歌词区域高度 --
+                q_h_real = 0
+                font_quote_small = ImageFont.truetype(self.font_path, int(font_quote.size * 0.8))
+                q_bbox = font_quote.getbbox("高")
+                q_font_h = q_bbox[3] - q_bbox[1]
+                small_q_bbox = font_quote_small.getbbox("高")
+                small_q_font_h = small_q_bbox[3] - small_q_bbox[1]
+
+                for raw_line in quote_content.split('\n'):
+                    match = re.match(r'^\[([:_-]+)\](.*)$', raw_line.strip())
+                    if match:
+                        spec, text_content = match.groups()
+                        use_small_font = '_' in spec
+                        target_font = font_quote_small if use_small_font else font_quote
+                        target_font_h = small_q_font_h if use_small_font else q_font_h
+                        wrap_width = q_max_w * 0.8
+                        wrapped_sub_lines, _ = self._process_text_wrapping(temp_draw, text_content.strip(), target_font,
+                                                                           wrap_width)
+                        q_h_real += len(wrapped_sub_lines) * target_font_h * 1.6
+                    else:
+                        if not raw_line.strip():
+                            q_h_real += q_font_h * 1.6
+                            continue
+                        wrapped_sub_lines, _ = self._process_text_wrapping(temp_draw, raw_line, font_quote, q_max_w)
+                        q_h_real += len(wrapped_sub_lines) * q_font_h * 1.6
+
+                if mode == self.DAILY:
+                    # DAILY 模式: 保留为来源和底部预留的完整边距
+                    q_h = q_h_real + 40 + 30
+                    footer_inner_h = 20 + 20 + 32 + 25
+                else:  # LYRIC 模式
+                    # LYRIC 模式: 仅为装饰性引号保留少量边距，并移除底部
+                    q_h = q_h_real + 30
+                    footer_inner_h = 0
+
+                middle_h = max(200, q_h)
 
         # 总高度
         cover_size = self.MAX_TEXT_W
@@ -648,19 +674,17 @@ class MusicCard:
                 self._draw_text_right(draw, "--来自 @" + quote_source + " 的评论", font_quote_sub, self.CONTENT_RIGHT_X,
                                     q_curr_y + 20, self.C_SUB)
 
-            # 绘制底部
-            # 虚线分隔符 & 文字
-            bot_sep_y = mid_y + middle_h + 10
-            for x in range(self.CONTENT_LEFT_X, self.CONTENT_RIGHT_X, 20):
-                draw.ellipse((x, bot_sep_y, x + 4, bot_sep_y + 4), fill=self.C_ACCENT)
+                # 虚线分隔符 & 文字
+                bot_sep_y = mid_y + middle_h + 10
+                for x in range(self.CONTENT_LEFT_X, self.CONTENT_RIGHT_X, 20):
+                    draw.ellipse((x, bot_sep_y, x + 4, bot_sep_y + 4), fill=self.C_ACCENT)
 
-            foot_base_y = bot_sep_y
-
-            foot_y = foot_base_y + 24
-            ct = "AMLL 亲友团 | 今日推荐" if mode == self.DAILY else "歌词制卡"
-            ct_bbox = draw.textbbox((0, 0), ct, font=font_fc)
-            draw.text((self.MARGIN_SIDE + (self.CARD_W - (ct_bbox[2] - ct_bbox[0])) / 2, foot_y),
-                      ct, font=font_fc, fill=self.C_FOOTER_CENTER)
+                foot_base_y = bot_sep_y
+                foot_y = foot_base_y + 24
+                ct = "AMLL 亲友团 | 今日推荐"
+                ct_bbox = draw.textbbox((0, 0), ct, font=font_fc)
+                draw.text((self.MARGIN_SIDE + (self.CARD_W - (ct_bbox[2] - ct_bbox[0])) / 2, foot_y),
+                          ct, font=font_fc, fill=self.C_FOOTER_CENTER)
         else:
             foot_base_y = sep_y
 
@@ -814,7 +838,7 @@ async def generate_music_card_process(
             src = daily_data['username']
             final_data['quote_source'] = src  # if src.startswith("-") else f"- {src}"
 
-    elif mode != MusicCard.CARD:
+    else:
         # 回退到 NCM ID 参数
         if mode == MusicCard.DAILY:
             print("无每日推荐或获取失败，检查命令行参数...")
