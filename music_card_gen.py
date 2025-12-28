@@ -376,7 +376,7 @@ class MusicCard:
         draw = ImageDraw.Draw(bg_img)
 
         # 贴封面
-        cover_resized = cover_img_raw.resize((cover_size, cover_size), Image.Resampling.LANCZOS)
+        cover_resized = ImageOps.fit(cover_img_raw, (cover_size, cover_size), method=Image.Resampling.LANCZOS)
         bg_img.paste(cover_resized,
                      (self.CONTENT_LEFT_X, self.MARGIN_TOP + self.INNER_PAD),
                      self.create_rounded_mask(cover_resized.size, 30))
