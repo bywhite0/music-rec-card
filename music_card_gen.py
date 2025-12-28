@@ -7,6 +7,8 @@ import sys
 from datetime import datetime
 from io import BytesIO
 from typing import Optional, Dict, Any
+from xml.dom.minidom import parseString, Document
+from ttml.ttml import TTML
 
 import aiohttp
 import qrcode
@@ -14,6 +16,10 @@ from PIL import Image, ImageDraw, ImageFont, ImageFilter, ImageOps, ImageEnhance
 
 
 class MusicCard:
+    DAILY = "daily"
+    CARD = "card"
+    LYRIC = "lyric"
+
     def __init__(self, font_path: str, platform: str = "ncm"):
         self.font_path = font_path
         self.platform = platform
@@ -197,21 +203,47 @@ class MusicCard:
         return "#4a3b32" if lum > 120 else "#f2f2f2"
 
     @staticmethod
-    def get_safe_qr_color(theme_rgb):
-        """
-        [新增] 确保二维码颜色在浅色背景上足够深
-        """
-        r, g, b = theme_rgb
-        # 计算亮度 (0~255)
-        lum = (r * 299 + g * 587 + b * 114) / 1000
+    def _get_relative_luminance(rgb):
+        """计算 sRGB 颜色的相对亮度"""
+        r, g, b = [x / 255.0 for x in rgb]
+        r = r / 12.92 if r <= 0.03928 else ((r + 0.055) / 1.055) ** 2.4
+        g = g / 12.92 if g <= 0.03928 else ((g + 0.055) / 1.055) ** 2.4
+        b = b / 12.92 if b <= 0.03928 else ((b + 0.055) / 1.055) ** 2.4
+        return 0.2126 * r + 0.7152 * g + 0.0722 * b
 
-        # 阈值：如果亮度 > 150 (说明颜色很浅，如浅粉、浅蓝、白)，则由于卡片背景也是白色/浅色，会无法识别
-        # 此时强制将颜色压暗，保持色相但降低亮度
-        if lum > 150:
-            return tuple(int(c * 0.8) for c in theme_rgb)
+    @classmethod
+    def _get_contrast_ratio(cls, rgb1, rgb2):
+        """计算两种颜色之间的对比度"""
+        lum1 = cls._get_relative_luminance(rgb1)
+        lum2 = cls._get_relative_luminance(rgb2)
+        if lum1 > lum2:
+            return (lum1 + 0.05) / (lum2 + 0.05)
+        else:
+            return (lum2 + 0.05) / (lum1 + 0.05)
 
-        # 否则直接使用原主题色
-        return theme_rgb
+    @classmethod
+    def get_safe_qr_color(cls, theme_rgb, bg_color_rgb=(253, 253, 253)):
+        """
+        [最终改进] 确保二维码颜色与实际背景有足够的对比度 (WCAG > 4.5:1)。
+        :param theme_rgb: 原始主题色
+        :param bg_color_rgb: 二维码区域的实际平均背景色
+        """
+        min_contrast_ratio = 4.5
+
+        current_color = list(theme_rgb)
+
+        # 循环调整，直到对比度达标
+        while cls._get_contrast_ratio(tuple(current_color), bg_color_rgb) < min_contrast_ratio:
+            # 如果已经是纯黑，则停止
+            if current_color[0] <= 5 and current_color[1] <= 5 and current_color[2] <= 5:
+                return (0, 0, 0)
+
+            # 按比例调暗颜色
+            current_color[0] = max(0, int(current_color[0] * 0.9))
+            current_color[1] = max(0, int(current_color[1] * 0.9))
+            current_color[2] = max(0, int(current_color[2] * 0.9))
+
+        return tuple(current_color)
 
     @staticmethod
     def generate_styled_qrcode(data, theme_color, size=120):
@@ -356,12 +388,13 @@ class MusicCard:
                        data: Dict[str, Any],
                        inner_blurred: bool = False,
                        show_qrcode: bool = False,
-                       card_only: bool = False) -> Image.Image:
+                       mode: str = DAILY) -> Image.Image:
         """
         生成音乐卡片的核心方法
         :param data: 包含 title, artist, cover_url, quote_content, quote_source, date_obj, music_id
         :param inner_blurred: 是否开启内部模糊
         :param show_qrcode: 是否显示二维码
+        :param mode: 制卡模式
         :return: PIL.Image 对象
         """
         # 准备数据
@@ -416,28 +449,41 @@ class MusicCard:
         # 头部实际高度 (取文本块与二维码的较大值)
         header_h_real = max(text_block_h, QR_SIZE) if (show_qrcode and music_id) else text_block_h
 
-        if card_only:
-            header_section_h = header_h_real
-            middle_h = 0
-            footer_inner_h = 60
-        else:
-            header_section_h = header_h_real + 30 + 4 + 40  # + padding + line + padding
+        match mode:
+            case self.CARD:
+                header_section_h = header_h_real
+                middle_h = 0
+                footer_inner_h = 60
+            case self.DAILY:
+                header_section_h = header_h_real + 30 + 4 + 40  # + padding + line + padding
 
-            # 中间区域 (日期 & 引言)
-            q_x = self.CONTENT_LEFT_X + 240
-            q_max_w = self.CONTENT_RIGHT_X - q_x
-            q_lines, q_font_h = self._process_text_wrapping(temp_draw, quote_content, font_quote, q_max_w)
-            q_h = (len(q_lines) * q_font_h * 1.6) + 40 + 30  # + deco + padding
-            middle_h = max(200, q_h)
+                # 中间区域 (日期 & 引言)
+                q_x = self.CONTENT_LEFT_X + 240
+                q_max_w = self.CONTENT_RIGHT_X - q_x
+                q_lines, q_font_h = self._process_text_wrapping(temp_draw, quote_content, font_quote, q_max_w)
+                q_h = (len(q_lines) * q_font_h * 1.6) + 40 + 30  # + deco + padding
+                middle_h = max(200, q_h)
 
-            # 底部
-            footer_inner_h = 20 + 20 + 32 + 25
+                # 底部
+                footer_inner_h = 20 + 20 + 32 + 25
+            case self.LYRIC:
+                header_section_h = header_h_real + 30 + 4 + 40  # + padding + line + padding
+
+                # 中间区域 (日期 & 引言)
+                q_x = self.CONTENT_LEFT_X
+                q_max_w = self.CONTENT_RIGHT_X - q_x
+                q_lines, q_font_h = self._process_text_wrapping(temp_draw, quote_content, font_quote, q_max_w)
+                q_h = (len(q_lines) * q_font_h * 1.6) + 40 + 30  # + deco + padding
+                middle_h = max(200, q_h)
+
+                # 底部
+                footer_inner_h = 20 + 20 + 32 + 25
 
         # 总高度
         cover_size = self.MAX_TEXT_W
         total_card_h = self.INNER_PAD + cover_size + header_section_h + footer_inner_h
-        if not card_only:
-            total_card_h = self.INNER_PAD + cover_size + 30 + header_section_h + middle_h + footer_inner_h
+        if mode != self.CARD:
+            total_card_h += 30 + middle_h
         total_img_h = int(total_card_h + self.MARGIN_TOP + self.MARGIN_BOTTOM)
 
         # 绘制主背景
@@ -485,31 +531,45 @@ class MusicCard:
         # 二维码 (头部右侧)
         if show_qrcode and music_id:
             song_url = f"https://music.163.com/#/song?id={music_id}" if self.platform == "ncm" else f"https://y.qq.com/n/ryqq_v2/songDetail/{music_id}"
-            safe_qr_color = self.get_safe_qr_color(theme_rgb)
+
+            # 1. 计算二维码的精确位置和区域
+            qr_x = int(self.CONTENT_RIGHT_X - QR_SIZE)
+            qr_y = int(header_start_y)
+            qr_region_box = (qr_x, qr_y, qr_x + QR_SIZE, qr_y + QR_SIZE)
+
+            # 2. 采样该区域的平均背景色
+            qr_background_sample = bg_img.crop(qr_region_box)
+            avg_bg_color = self.get_dominant_color(qr_background_sample)
+
+            # 3. 使用实际背景色计算安全的二维码颜色
+            safe_qr_color = self.get_safe_qr_color(theme_rgb, avg_bg_color)
+
+            # 4. 生成并粘贴二维码
             qr_img = self.generate_styled_qrcode(song_url, safe_qr_color, size=QR_SIZE)
-            bg_img.paste(qr_img,
-                         (int(self.CONTENT_RIGHT_X - QR_SIZE), int(header_start_y)),
-                         qr_img)
+            bg_img.paste(qr_img, (qr_x, qr_y), qr_img)
 
         sep_y = header_start_y + header_h_real
-        if not card_only:
+        if mode != self.CARD:
             # 分隔线
             sep_y = header_start_y + header_h_real + 30
             for x in range(self.CONTENT_LEFT_X, self.CONTENT_RIGHT_X, 20):
                 draw.ellipse((x, sep_y, x + 4, sep_y + 4), fill=self.C_ACCENT)
 
             mid_y = sep_y + 40
-            # 带推荐时绘制中间部分
-            # 日期
-            date_x = self.CONTENT_LEFT_X + 20
-            month_color = self.get_adaptive_month_color(
-                bg_img.crop((date_x, mid_y, date_x + 80, mid_y + 40)), theme_rgb
-            )
-            draw.text((date_x, mid_y), date_month_str, font=font_date_month, fill=month_color)
 
-            m_bbox = font_date_month.getbbox("A")
-            draw.text((date_x, mid_y + (m_bbox[3] - m_bbox[1]) + 10), str(date_day_int), font=font_date_num,
-                      fill=self.C_MAIN)
+            # 绘制中间部分
+
+            if mode == self.DAILY:
+                # 日期
+                date_x = self.CONTENT_LEFT_X + 20
+                month_color = self.get_adaptive_month_color(
+                    bg_img.crop((date_x, mid_y, date_x + 80, mid_y + 40)), theme_rgb
+                )
+                draw.text((date_x, mid_y), date_month_str, font=font_date_month, fill=month_color)
+
+                m_bbox = font_date_month.getbbox("A")
+                draw.text((date_x, mid_y + (m_bbox[3] - m_bbox[1]) + 10), str(date_day_int), font=font_date_num,
+                          fill=self.C_MAIN)
 
             # 引言
             q_curr_y = mid_y + 5
@@ -584,8 +644,9 @@ class MusicCard:
             draw.text((deco_x, deco_y), "❞", font=font_deco, fill=deco_color)
 
             # 来源
-            self._draw_text_right(draw, "--来自 @" + quote_source + " 的评论", font_quote_sub, self.CONTENT_RIGHT_X,
-                                  q_curr_y + 20, self.C_SUB)
+            if mode == self.DAILY:
+                self._draw_text_right(draw, "--来自 @" + quote_source + " 的评论", font_quote_sub, self.CONTENT_RIGHT_X,
+                                    q_curr_y + 20, self.C_SUB)
 
             # 绘制底部
             # 虚线分隔符 & 文字
@@ -596,7 +657,7 @@ class MusicCard:
             foot_base_y = bot_sep_y
 
             foot_y = foot_base_y + 24
-            ct = "AMLL 亲友团 | 今日推荐"
+            ct = "AMLL 亲友团 | 今日推荐" if mode == self.DAILY else "歌词制卡"
             ct_bbox = draw.textbbox((0, 0), ct, font=font_fc)
             draw.text((self.MARGIN_SIDE + (self.CARD_W - (ct_bbox[2] - ct_bbox[0])) / 2, foot_y),
                       ct, font=font_fc, fill=self.C_FOOTER_CENTER)
@@ -621,17 +682,88 @@ class MusicCard:
         return bg_img
 
 
+def ttml_to_lys(content: str):
+    dom: Document = parseString(content)
+    ttml: TTML = TTML(dom)
+    orig, _ = ttml.to_lys()
+
+    return orig
+
+async def fetch_lys(music_id: str, platform: str):
+    folder = {
+        "ncm": "ncm-lyrics",
+        "qq": "qq-lyrics"
+    }
+    url = f"https://amlldb.bikonoo.com/{folder[platform]}/{music_id}.ttml"
+    print(f"正在获取 {music_id} 的 TTML 文件...")
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url) as resp:
+                if resp.status != 200:
+                    print(f"Error: {resp.status}")
+                    return None
+
+                # API 可能返回 "null" 或 JSON 对象
+                text_resp = await resp.text()
+                if not text_resp or text_resp.strip() == "null":
+                    print("该 ID 所对应歌词还无人制作")
+                    return None
+
+                return ttml_to_lys(text_resp)
+    except Exception as e:
+        print(f"Error: {e}")
+        return None
+
+
+def lys_to_lines(lys_line: str):
+    """
+    解析歌词行，处理后，用换行符连接并返回。
+    """
+    processed_lines = []
+    line_regex = re.compile(r'^\[(\d)\](.*)$')
+
+    def process_lyric_line(_property: str, _text: str):
+        match _property:
+            case '0' | '3':
+                return "[:-:]" + _text
+            case '1' | '4':
+                return "[:-]" + _text
+            case '2' | '5':
+                return "[-:]" + _text
+            case '6':
+                return "[:_:]" + _text
+            case '7':
+                return "[:_]" + _text
+            case '8':
+                return "[_:]" + _text
+            case _:
+                return _text
+
+    for line in lys_line.strip().split('\n'):
+        line = re.sub(r"\(\d+,\d+\)", '', line.strip())
+        matches = line_regex.match(line)
+        if matches:
+            # 提取分钟、秒、毫秒和文本
+            property = matches.group(1)
+            text = matches.group(2)
+
+            # 调用函数处理并保存结果
+            processed_line = process_lyric_line(property, text)
+            processed_lines.append(processed_line)
+
+    return '\n'.join(processed_lines)
+
 # --- 逻辑控制入口 ---
 
 async def generate_music_card_process(
         platform: str,
+        mode: str,
         date_str: str,
         music_id_arg: Optional[str] = None,
         info_arg: Optional[list] = None,
         quote_arg: Optional[list] = None,
         inner_blurred: bool = False,
         show_qrcode: bool = False,
-        card_only: bool = False,
         font_path: str = "PingFangSC.ttf",
         qq_music_cookie: str = ""
 ) -> Optional[Image.Image]:
@@ -653,7 +785,7 @@ async def generate_music_card_process(
     final_data['date_obj'] = date_obj
     daily_data = None
 
-    if not card_only:
+    if mode == MusicCard.DAILY:
         # 尝试获取每日推荐
         daily_data = await card_gen.fetch_daily_recommendation(date_str)
 
@@ -682,15 +814,15 @@ async def generate_music_card_process(
             src = daily_data['username']
             final_data['quote_source'] = src  # if src.startswith("-") else f"- {src}"
 
-    else:
+    elif mode != MusicCard.CARD:
         # 回退到 NCM ID 参数
-        if not card_only:
+        if mode == MusicCard.DAILY:
             print("无每日推荐或获取失败，检查命令行参数...")
+
         if music_id_arg:
             song_info = await card_gen.fetch_ncm_song_info(music_id_arg) if platform == "ncm" else await card_gen.fetch_qq_music_info(music_id_arg, qq_music_cookie)
             if song_info:
                 final_data.update(song_info)
-
         # 回退到手动 Info 参数
         elif info_arg and len(info_arg) == 3:
             final_data['title'] = info_arg[0]
@@ -705,7 +837,13 @@ async def generate_music_card_process(
     # 处理手动引言 (仅当 API 未提供引言时，才使用命令行参数覆盖默认值)
     # 如果 Daily API 已经填入了 quote_content，则忽略命令行 quote
     if 'quote_content' not in final_data:
-        if quote_arg and len(quote_arg) == 2:
+        if mode == MusicCard.LYRIC:
+            lys = await fetch_lys(music_id_arg, platform)
+            if not lys:
+                print("错误: 无法获取歌曲信息 (Daily API 返回值为空, 且未提供有效 NCM ID 或 Info)")
+                return None
+            final_data['quote_content'] = lys_to_lines(lys)
+        elif quote_arg and len(quote_arg) == 2:
             final_data['quote_content'] = quote_arg[0].replace('\\n', '\n')
             final_data['quote_source'] = quote_arg[1]
         else:
@@ -714,7 +852,7 @@ async def generate_music_card_process(
             final_data['quote_source'] = "RuriChan"
 
     # 生成图片
-    return await card_gen.generate(final_data, inner_blurred, show_qrcode, card_only)
+    return await card_gen.generate(final_data, inner_blurred, show_qrcode, mode)
 
 
 # --- 命令行入口 ---
@@ -722,12 +860,12 @@ async def generate_music_card_process(
 async def main():
     parser = argparse.ArgumentParser(description="生成仿网易云音乐风格的音乐卡片")
     parser.add_argument("--platform", type=str, choices=["ncm", "qq"], default="ncm", help="获取歌曲的平台 ncm/qq")
+    parser.add_argument("--mode", type=str, choices=["daily", "card", "lyric"], default="daily", help="制卡模式")
     parser.add_argument("--date", type=str, default=datetime.now().strftime("%Y-%m-%d"), help="日期 YYYY-MM-DD")
     parser.add_argument("--info", nargs=3, metavar=('TITLE', 'ARTIST', 'COVER_URL'), help="手动指定歌曲信息")
     parser.add_argument("--quote", nargs=2, metavar=('CONTENT', 'SOURCE'), help="引言内容与来源")
     parser.add_argument("--inner-blurred", action="store_true", help="卡片内部背景模糊")
     parser.add_argument("--qrcode", action="store_true", help="生成二维码")
-    parser.add_argument("--card-only", action="store_true", help="仅生成卡片模式(移除日期与引言)")
     parser.add_argument("--qq-music-cookie", type=str, help="QQ 音乐 Cookie")
     parser.add_argument("--music-id", type=str, help="歌曲 ID")
 
@@ -735,18 +873,25 @@ async def main():
 
     img = await generate_music_card_process(
         platform=args.platform,
+        mode=args.mode,
         date_str=args.date,
         music_id_arg=args.music_id,
         info_arg=args.info,
         quote_arg=args.quote,
         inner_blurred=args.inner_blurred,
         show_qrcode=args.qrcode,
-        card_only=args.card_only,
         qq_music_cookie=args.qq_music_cookie
     )
 
     if img:
-        filename = f"music_card_{args.music_id}.png" if args.card_only else f"music_card_{args.date}.png"
+        filename = ''
+        match args.mode:
+            case MusicCard.LYRIC:
+                filename = f"music_lyric_{args.music_id}.png"
+            case MusicCard.CARD:
+                filename = f"music_card_{args.music_id}.png"
+            case MusicCard.DAILY:
+                filename = f"music_card_{args.date}.png"
         img.save(filename)
         print(f"图片保存成功: {filename}")
         # img.show()
