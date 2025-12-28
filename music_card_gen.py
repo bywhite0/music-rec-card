@@ -265,59 +265,88 @@ class MusicCard:
 
     # --- 布局与绘制 ---
 
+    @staticmethod
+    def contains_cjk(text: str) -> bool:
+        """
+        检查字符串是否包含 CJK 字符。
+        """
+        for char in text:
+            # CJK 统一表意文字 U+4E00..U+9FFF
+            # CJK 兼容表意文字 U+F900..U+FAFF
+            # ... 还有很多，但这个范围已经能覆盖绝大部分场景
+            if '\u4e00' <= char <= '\u9fff':
+                return True
+        return False
+
     def _process_text_wrapping(self, draw, text, font, max_width):
         """
-        [重构] 智能换行方法，优先在单词间换行。
+        [最终国际化版] 智能换行方法。
+        - 对 CJK 文本进行逐字换行，不加连字符。
+        - 对西文文本进行单词间换行，并为超长单词自动添加连字符。
         """
         final_lines = []
+
+        # 获取基础行高
+        bbox = font.getbbox("高")
+        line_height = bbox[3] - bbox[1]
+
         for paragraph in text.split('\n'):
+            paragraph = paragraph.strip()
+
             if not paragraph:
                 final_lines.append("")
                 continue
 
-            words = paragraph.split(' ')
-            current_line = ""
-
-            for i, word in enumerate(words):
-                # --- 处理单个单词超长的情况 ---
-                if draw.textlength(word, font=font) > max_width:
-                    # 如果当前行有内容，先将其提交
-                    if current_line:
+            # --- 判断文本类型，选择不同策略 ---
+            if self.contains_cjk(paragraph):
+                # --- 策略 A: CJK 文本处理 (逐字换行) ---
+                current_line = ""
+                for char in paragraph:
+                    if draw.textlength(current_line + char, font=font) <= max_width:
+                        current_line += char
+                    else:
                         final_lines.append(current_line)
-                        current_line = ""
-
-                    # 对超长单词进行强制字符级换行
-                    temp_chunk = ""
-                    for char in word:
-                        if draw.textlength(temp_chunk + char, font=font) <= max_width:
-                            temp_chunk += char
-                        else:
-                            final_lines.append(temp_chunk)
-                            temp_chunk = char
-
-                    # 超长单词被分割后的剩余部分，成为新行的开头
-                    if temp_chunk:
-                        current_line = temp_chunk
-                    continue
-
-                # --- 正常的单词拼接逻辑 ---
-                separator = " " if current_line else ""
-                test_line = current_line + separator + word
-
-                if draw.textlength(test_line, font=font) <= max_width:
-                    current_line = test_line
-                else:
-                    # 当前单词无法加入，提交上一行
+                        current_line = char
+                if current_line:
                     final_lines.append(current_line)
-                    # 新单词成为新行的开头
-                    current_line = word
+            else:
+                # --- 策略 B: 西文文本处理 (基于单词换行) ---
+                words = paragraph.split(' ')
+                current_line = ""
+                for word in words:
+                    # 处理单个单词超长的情况
+                    word_width = draw.textlength(word, font=font)
+                    if word_width > max_width:
+                        if current_line:
+                            final_lines.append(current_line)
+                            current_line = ""
 
-            # 循环结束后，提交最后一行
-            if current_line:
-                final_lines.append(current_line)
+                        hyphen_width = draw.textlength("-", font=font)
+                        effective_max_width = max_width - hyphen_width
+                        temp_chunk = ""
+                        for char in word:
+                            if draw.textlength(temp_chunk + char, font=font) <= effective_max_width:
+                                temp_chunk += char
+                            else:
+                                final_lines.append(temp_chunk + "-")
+                                temp_chunk = char
+                        if temp_chunk:
+                            current_line = temp_chunk
+                        continue
 
-        bbox = font.getbbox("高")
-        return final_lines, bbox[3] - bbox[1]
+                    # 正常的单词拼接逻辑
+                    separator = " " if current_line else ""
+                    test_line = current_line + separator + word
+                    if draw.textlength(test_line, font=font) <= max_width:
+                        current_line = test_line
+                    else:
+                        final_lines.append(current_line)
+                        current_line = word
+                if current_line:
+                    final_lines.append(current_line)
+
+        return final_lines, line_height
+
 
     def _draw_text_right(self, draw, text, font, right_x, y, fill):
         w = draw.textlength(text, font=font)
