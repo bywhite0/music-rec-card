@@ -1,243 +1,129 @@
 from re import Pattern, compile
-from typing import AnyStr
-from xml.dom.minidom import Element
 
-from .ttml_syl import TTMLSyl
-from .ttml_time import TTMLTime
+from lxml.etree import _Element
+
+from ttml.utils import qname  # 假设 NS_MAP 和 qname 定义在 ttml.py 或 common
 
 
 class TTMLLine:
-    class ASSTime:
-        def __init__(self, ttml_time: TTMLTime):
-            count: int = int(ttml_time) // 10
-            self.__count: int = count
-            self.__centis = count % 100
-            count //= 100
-            self.__second = count % 60
-            count //= 60
-            self.__minute = count % 60
-            self.__hour = count // 60
+    brackets: Pattern[str] = compile(r'[(（]+(.+?)[）)]+')
 
-        def __str__(self) -> str:
-            return f'{self.__hour:02}:{self.__minute:02}:{self.__second:02}.{self.__centis:02}'
+    def __init__(self, element: _Element, object_lang: str, parent: "TTMLLine" = None):
+        # 使用精确的命名空间获取属性
+        # 对应 itunes:key
+        self._key: str = element.get(qname('itunes', 'key'))
 
-        def __sub__(self, other) -> int:
-            return self.__count - other.__count
+        self._is_duet: bool = False
+        self._orig_line: str = ""
 
-    class LRCTime:
-        def __init__(self, ttml_time: TTMLTime):
-            count: int = int(ttml_time) // 10
-            self.centis = count % 100
-            count //= 100
-            self.__second = count % 60
-            self.__minute = count // 60
+        self._bg_line: TTMLLine | None = None
+        self._ts_line: dict[str, str] | str | None = dict[str, str]()
 
-        def __str__(self) -> str:
-            return f'{self.__minute:02}:{self.__second:02}.{self.centis:02}'
+        self._is_bg: bool = parent is not None
 
-    __before: Pattern[AnyStr] = compile(r'^\(+')
-    __after: Pattern[AnyStr] = compile(r'\)+$')
+        # 对应 ttm:agent
+        agent: str = element.get(qname('ttm', 'agent'))
+        self._is_duet = bool(agent and agent != 'v1') if parent is None else parent._is_duet
 
-    def __init__(self, element: Element, parent = None):
-        self.__is_duet: bool = False
-        self.__orig_line: list[TTMLSyl | str] = []
-        self.__bg_line: TTMLLine | None = None
+        # 1. 获取自身的 text (对应 minidom 第一个子节点前的文本)
+        if element.text:
+            self._orig_line += element.text
 
-        self.__ts_line: list[tuple[str,str]] = []
-        self.__roma_line: str | None = None
+        # 2. 遍历子元素
+        for child in element:
+            # 对应 ttm:role
+            role: str = child.get(qname('ttm', 'role'))
 
-        self.__is_bg: bool = parent is not None
+            match role:
+                case "x-bg":
+                    self._bg_line = TTMLLine(child, object_lang, self)
+                case "x-translation":
+                    # 对应 xml:lang
+                    lang: str = child.get(qname('xml', 'lang'))
+                    if not lang:
+                        lang = "zh-Hans"
+                    self._ts_line[lang] = child.text if child.text else ""
+                case None:
+                    if child.text:
+                        self._orig_line += child.text
+                case _:
+                    pass
 
-        # 获取传入元素的 agent 属性
-        agent: str = element.getAttribute("ttm:agent")
-        self.__is_duet = bool(agent and agent != 'v1') if parent is None else parent.__is_duet
+            # 3. 获取子元素后的 tail (对应 minidom 子节点后的文本)
+            if child.tail:
+                self._orig_line += child.tail
 
-        # 获取 <p> 元素的所有子节点，包括文本节点
-        child_elements: list[Element] = element.childNodes  # iter() 会返回所有子元素和文本节点
+        if self._is_bg:
+            if TTMLLine.brackets.match(self._orig_line.strip()):
+                self._orig_line = TTMLLine.brackets.match(self._orig_line.strip()).group(1).strip()
 
-        # 遍历所有子元素
-        for child in child_elements:
-            if child.nodeType == 3 and child.nodeValue:  # 如果是文本节点（例如空格或换行）
-                self.__orig_line.append(child.nodeValue)
-            else:
-                # 获取 <span> 中的属性
-                role: str = child.getAttribute("ttm:role")
-
-                # 没有role代表是一个syl
-                if role == "":
-                    if len(child.childNodes) != 0 and child.childNodes[0].nodeValue:
-                        self.__orig_line.append(TTMLSyl(child))
-
-                elif role == "x-bg":
-                    # 和声行
-                    self.__bg_line = TTMLLine(child, self)
-                elif role == "x-translation":
-                    # 翻译行
-                    self.__ts_line.append((f'{child.childNodes[0].data}',child.getAttribute("xml:lang")))
-                elif role == "x-roman":
-                    # 音译行
-                    self.__roma_line = f'{child.childNodes[0].data}'
-
-        self.__begin: TTMLTime = TTMLTime(element.getAttribute("begin"))
-        self.__end: TTMLTime = TTMLTime(element.getAttribute("end"))
-
-        if self.__is_bg:
-            if TTMLLine.__before.search(self.__orig_line[0] if type(self.__orig_line[0]) == str else self.__orig_line[0].text):
-                if type(self.__orig_line[0]) == str:
-                    self.__orig_line[0] = TTMLLine.__before.sub('', self.__orig_line[0])
-                else:
-                    self.__orig_line[0].text = TTMLLine.__before.sub('', self.__orig_line[0].text)
-            if TTMLLine.__after.search(self.__orig_line[-1] if type(self.__orig_line[-1]) == str else self.__orig_line[-1].text):
-                if type(self.__orig_line[-1]) == str:
-                    self.__orig_line[-1] = TTMLLine.__after.sub('', self.__orig_line[-1])
-                else:
-                    self.__orig_line[-1].text = TTMLLine.__after.sub('', self.__orig_line[-1].text)
-
-    def have_bg(self) -> bool:
-        return self.__bg_line is not None
-
-    def have_ts(self) -> bool:
-        return len(self.__ts_line) != 0
-
-    def have_duet(self) -> bool:
-        return self.__is_duet
-
-    def get_begin(self) -> TTMLTime:
-        return self.__begin if type(self.__orig_line[0]) == str else self.__orig_line[0].get_begin()
-
-    def get_end(self) -> TTMLTime:
-        return self.__end if type(self.__orig_line[-1]) == str else self.__orig_line[-1].get_end()
-
-    @staticmethod
-    def __lys_pre_process(line: list[TTMLSyl|str]) -> list[TTMLSyl|str]:
-        new_line: list[TTMLSyl|str] = []
-        for syl in line:
-            if type(syl) == str and len(new_line) > 0 and line.index(syl) != 0 and len(syl) < 2:
-                last_syl = new_line.pop()
-                last_syl.text += syl
-                new_line.append(last_syl)
-            else:
-                new_line.append(syl)
-
-        return new_line
-
-    def __lys_role(self, have_bg: bool, have_duet: bool) -> int:
-        return ((int(have_bg) + int(self.__is_bg)) * 3
-                + int(have_duet) + int(self.__is_duet))
-
-    def __lys_raw(self, have_bg: bool, have_duet: bool) -> tuple[str, str | None]:
-        return (f'[{self.__lys_role(have_bg, have_duet)}]' + (''.join(
-            [v if type(v) == str else v.lys_str() for v in TTMLLine.__lys_pre_process(self.__orig_line)] if len(
-                self.__orig_line) != 1 or type(self.__orig_line[0]) != str else f'{self.__orig_line[0]}({int(self.get_begin())},{self.get_end() - self.get_begin()})')),
-                f'[{self.__begin}]{self.__ts_line[0][0]}' if len(self.__ts_line) != 0 else None)
-
-    def lys_str(self, have_bg: bool, have_duet: bool) -> tuple[tuple[str, str | None], tuple[str, str | None] | None]:
-        return self.__lys_raw(have_bg, have_duet), (
-            self.__bg_line.__lys_raw(have_bg, have_duet) if self.__bg_line else None)
-
-    def spl_str(self) -> str:
-        orig: list[str] = []
-        pure: list[str] = []
-        last: TTMLTime|None = None
-
-        orig.append(f'[{self.__begin}]')
-        for syl in self.__orig_line:
-            if type(syl) == str:
-                orig.append(syl)
-                last = None
-                continue
-            begin, text, end = syl.spl_str()
-            if not (last is not None and not begin > last): # 空拍(下一词起始时间大于上一词结束时间)
-                orig.append(f'<{begin}>')
-            orig.append(text)
-            orig.append(f'<{end}>')
-            last = end
-        orig.append(f'[{self.__end}]')
-        pure.append(''.join(orig))
-        if len(self.__ts_line) != 0:
-            for ts_line in self.__ts_line:
-                pure.append(ts_line[0])
-        if self.__roma_line:
-            pure.append(self.__roma_line)
-        if self.__bg_line:
-            pure.append(''.join([syl if type(syl) == str else syl.text for syl in self.__bg_line.__orig_line]))
-            if len(self.__bg_line.__ts_line) != 0:
-                for ts_line in self.__bg_line.__ts_line:
-                    pure.append(ts_line[0])
-            if self.__bg_line.__roma_line:
-                pure.append(self.__bg_line.__roma_line)
-
-        return '\n'.join(pure)
-
-    def __ass_text(self) -> str:
-        syls: list[tuple[TTMLLine.ASSTime,str]] = []
-        last: TTMLTime = self.__begin
-
-        for index, syl in enumerate(self.__orig_line):
-            if type(syl) == str: #  文本节点
-                # 以上一 syl 的结束作为起点，下一 syl 的起始作为终点
-                syls.append((TTMLLine.ASSTime(last), syl))
-                last = self.__orig_line[index + 1].get_begin() if index < len(self.__orig_line) - 1 else self.__end
-            else:
-                sbegin: TTMLTime = syl.get_begin()
-                if sbegin > last: # 出现空拍
-                    syls.append((TTMLLine.ASSTime(last), ''))
-                syls.append((TTMLLine.ASSTime(sbegin), syl.text))
-                last = syl.get_end()
-
-        send: TTMLLine.ASSTime = TTMLLine.ASSTime(self.__end)
+    def to_text(self, have_duet: bool) -> str:
         text: list[str] = []
+        head: str = ("[-:]" if self._is_duet else "[:-]") if have_duet else "[:-:]"
 
-        syls.reverse()
-        for sstart, stext in syls:
-            text.insert(0, rf'{{\k{send - sstart}}}{stext}')
-            send = sstart
+        if len(self._orig_line):
+            text.append(f"{head}{self._orig_line}")
+        head = head.replace('-', '_')
+        if self._bg_line and self._bg_line._orig_line:
+            text.append(f"{head}({self._bg_line._orig_line})")
+        if self._ts_line:
+            text.append(f"{head}{self._ts_line}")
+        if self._bg_line and self._bg_line._ts_line:
+            text.append(f"{head}({self._bg_line._ts_line})")
 
-        return ''.join(text)
+        return '\n'.join(text)
 
-    def ass_str(self) -> str:
-        line: list[str] = []
+    def append_ts(self, text: str, lang: str) -> None:
+        """
+        添加翻译文本。
+        如果有背景行 (bg_line) 且文本中包含括号，
+        则将括号内的内容拆分给 bg_line，括号外的保留给自己。
+        """
+        # 定义提取用的正则 (兼容中文括号，非贪婪匹配内部内容)
+        # 注意：这里我们定义一个适合“提取”的正则，
+        # 原 TTML.brackets 是贪婪匹配整个字符串用于去壳，不适合从混合字符串中提取。
+        pattern = compile(r'[(（]+(.+?)[）)]+')
 
-        line.append('Dialogue: 0')
-        line.append(str(TTMLLine.ASSTime(self.__begin)))
-        line.append(str(TTMLLine.ASSTime(self.__end)))
-        line.append('orig')
-        line.append('x-bg' if self.__is_bg else 'x-duet' if self.__is_duet else '')
-        line.append('0')
-        line.append('0')
-        line.append('0')
-        line.append('karaoke')
-        line.append(self.__ass_text())
+        # 搜索文本中是否有匹配的括号内容
+        match = pattern.search(text)
 
-        text: str = ','.join(line)
-        if len(self.__ts_line) != 0:
-            for ts_line in self.__ts_line:
-                text += f'\nDialogue: 0,{str(TTMLLine.ASSTime(self.__begin))},{str(TTMLLine.ASSTime(self.__end))},ts,x-lang:{ts_line[1]},0,0,0,karaoke,{ts_line[0]}'
-        if self.__roma_line:
-            text += f'\nDialogue: 0,{str(TTMLLine.ASSTime(self.__begin))},{str(TTMLLine.ASSTime(self.__end))},roma,,0,0,0,karaoke,{self.__roma_line}'
-        if self.__bg_line:
-            text += '\n' + self.__bg_line.ass_str()
+        if match and self._bg_line:
+            # 1. 提取括号内的内容 (group 1)
+            bg_content = match.group(1)
 
-        return text
+            # 2. 递归传递给 bg_line
+            self._bg_line._ts_line[lang] = bg_content.strip()
 
-    def lrc_str(self, ext: str|None = None) -> str:
-        lbegin: str = f'[{TTMLLine.LRCTime(self.__orig_line[0].get_begin())}]'
-        line: str = lbegin
+            # 3. 移除原文本中的括号部分
+            # 使用切片拼接的方式移除匹配到的部分，避免 replace 误伤重复词
+            start, end = match.span()
+            main_text = text[:start] + text[end:]
 
-        line += ''.join([v if type(v) == str else v.text for v in self.__orig_line])
-        if self.__bg_line:
-            line += '\n' + f'({"".join([syl if type(syl) == str else syl.text for syl in self.__bg_line.__orig_line])})'
+            self._ts_line[lang] = main_text.strip()
+        else:
+            # 如果没有括号或没有背景行，则全部作为主行翻译
+            self._ts_line[lang] = text.strip()
 
-        if ext == 'ts':
-            if len(self.__ts_line) != 0:
-                line += f'\n{lbegin}' + self.__ts_line[0][0]
-            if self.__bg_line and len(self.__bg_line.__ts_line) != 0:
-                line += f'({self.__bg_line.__ts_line[0][0]})'
+    def filter_ts(self, lang: str) -> None:
+        if lang in self._ts_line:
+            self._ts_line = self._ts_line[lang]
+        else:
+            self._ts_line = None
+        if self._bg_line:
+            self._bg_line.filter_ts(lang)
 
-        if ext == 'roma':
-            if self.__roma_line:
-                line += f'\n{lbegin}' + self.__roma_line
-            if self.__bg_line and self.__bg_line.__roma_line:
-                line += f'({self.__bg_line.__roma_line})'
+    @property
+    def key(self) -> str:
+        return self._key
 
-        return line
+    @key.setter
+    def key(self, key: str) -> None:
+        self._key = key
+
+    @property
+    def is_duet(self) -> bool:
+        return self._is_duet
+
+    @property
+    def ts_langs(self) -> list[str]:
+        return list(self._ts_line.keys())
