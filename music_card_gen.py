@@ -7,14 +7,15 @@ import sys
 from datetime import datetime
 from io import BytesIO
 from typing import Optional, Dict, Any
-from xml.dom.minidom import parseString, Document
-from ttml.ttml import TTML
 
 import aiohttp
 import qrcode
 from PIL import Image, ImageDraw, ImageFont, ImageFilter, ImageOps, ImageEnhance
 
+from ttml.ttml import TTML
+
 TTML_DB_URL_PREFIX = "https://amlldb.bikonoo.com"
+
 
 class MusicCard:
     DAILY = "daily"
@@ -237,7 +238,7 @@ class MusicCard:
         while cls._get_contrast_ratio(tuple(current_color), bg_color_rgb) < min_contrast_ratio:
             # 如果已经是纯黑，则停止
             if current_color[0] <= 5 and current_color[1] <= 5 and current_color[2] <= 5:
-                return (0, 0, 0)
+                return 0, 0, 0
 
             # 按比例调暗颜色
             current_color[0] = max(0, int(current_color[0] * 0.9))
@@ -266,9 +267,21 @@ class MusicCard:
 
     @staticmethod
     def create_gradient_mask(w, h):
-        gradient = Image.new('L', (1, h))
+        break_percent = 0.7
+        break_opa = 255 * break_percent
+        break_h = min(1100, h * break_percent)
+        data = []
         for y in range(h):
-            gradient.putpixel((0, y), int(255 * (y / h)))
+            if y < break_h:
+                val = int(break_opa * (y / break_h)) if break_h > 0 else 0
+            else:
+                denom = h - break_h
+                ratio = (y - break_h) / denom if denom > 0 else 1
+                val = int(break_opa + (255 - break_opa) * ratio)
+            data.append(val)
+
+        gradient = Image.new('L', (1, h))
+        gradient.putdata(data)  # 一次性写入数据，比 putpixel 快
         return gradient.resize((w, h))
 
     @staticmethod
@@ -317,7 +330,7 @@ class MusicCard:
         - 对 CJK 文本进行逐字换行，不加连字符。
         - 对西文文本进行单词间换行，并为超长单词自动添加连字符。
         """
-        final_lines = []
+        final_lines: list[str] = []
 
         # 获取基础行高
         bbox = font.getbbox("高")
@@ -385,8 +398,8 @@ class MusicCard:
 
         return final_lines, line_height
 
-
-    def _draw_text_right(self, draw, text, font, right_x, y, fill):
+    @staticmethod
+    def _draw_text_right(draw, text, font, right_x, y, fill):
         w = draw.textlength(text, font=font)
         draw.text((right_x - w, y), text, font=font, fill=fill)
 
@@ -455,6 +468,12 @@ class MusicCard:
         # 头部实际高度 (取文本块与二维码的较大值)
         header_h_real = max(text_block_h, QR_SIZE) if (show_qrcode and music_id) else text_block_h
 
+        q_max_w = 0
+        q_x = 0
+        footer_inner_h = 0
+        header_section_h = 0
+        middle_h = 0
+
         match mode:
             case self.CARD:
                 header_section_h = header_h_real
@@ -481,7 +500,7 @@ class MusicCard:
                     match = re.match(r'^\[([:_-]+)\](.*)$', raw_line.strip())
                     if match:
                         spec, text_content = match.groups()
-                        use_small_font = '_' in spec
+                        use_small_font = '_' in spec or spec == '-'
                         target_font = font_quote_small if use_small_font else font_quote
                         target_font_h = small_q_font_h if use_small_font else q_font_h
                         wrap_width = q_max_w * 0.8
@@ -614,39 +633,102 @@ class MusicCard:
                     spec, text_content = match.groups()
                     text_content = text_content.strip()
 
-                    # 1. 确定字体
-                    use_small_font = '_' in spec
-                    font_size = int(font_quote.size * 0.8) if use_small_font else font_quote.size
-                    target_font = ImageFont.truetype(self.font_path, font_size) if use_small_font else font_quote
-                    target_bbox = target_font.getbbox("高")
-                    target_font_h = target_bbox[3] - target_bbox[1]
+                    if spec == '-':
+                        # --- 特殊处理: 分割线/小节标记 ---
 
-                    # 2. 确定对齐方式
-                    norm_spec = spec.replace('_', '-')
-                    align = "left"  # 默认为左对齐
-                    if ":-:" in norm_spec:
-                        align = "center"
-                    elif "-:" in norm_spec:
-                        align = "right"
+                        # 设定上下留空高度 (解析 "4/1" 为 1/4 行高，即 0.25)
+                        padding_v = q_font_h * 0.25
 
-                    # 3. 文本换行 (使用 80% 宽度)
-                    wrap_width = q_max_w * 0.8
-                    margin_w = q_max_w * 0.1
-                    wrapped_sub_lines, _ = self._process_text_wrapping(draw, text_content, target_font, wrap_width)
+                        if not text_content:
+                            # 情况 1: 内容为空 -> 仅增加 1/4 行高的空白
+                            q_curr_y += padding_v
+                        else:
+                            # 情况 2: 有文本 -> 50%行宽点虚线 + 中间 1/3 大小文本(垂直居中) + 上下留空
 
-                    # 4. 绘制换行后的每一行
-                    for sub_line in wrapped_sub_lines:
-                        sub_line_width = draw.textlength(sub_line, font=target_font)
+                            # 1. 准备字体 (1/3 原大小)
+                            div_font_size = int(font_quote.size / 1.5)
+                            div_font_size = max(8, div_font_size)  # 最小尺寸保护
+                            div_font = ImageFont.truetype(self.font_path, div_font_size)
 
-                        x_pos = q_x  # 默认是 `:-` (左对齐)
-                        if align == "center":  # `:-:` (居中)
-                            x_pos = (q_x + margin_w) + (wrap_width - sub_line_width) / 2
-                        elif align == "right":  # `-:` (右对齐)
-                            # 对齐到整个可用区域的右侧
-                            x_pos = (q_x + q_max_w) - sub_line_width
+                            # 2. 计算文本尺寸
+                            # 获取文本宽度
+                            div_text_w = draw.textlength(text_content, font=div_font)
 
-                        draw.text((x_pos, q_curr_y), sub_line, font=target_font, fill=self.C_QUOTE)
-                        q_curr_y += target_font_h * 1.6
+                            # 获取参考高度 (使用通用高字符，保证不同行的分割线高度一致)
+                            # 注意：这里获取的是边界框高度，用于计算占位
+                            div_bbox = div_font.getbbox("Hg")
+                            div_text_h = div_bbox[3] - div_bbox[1]
+
+                            # 3. 布局计算 (核心修改)
+                            div_total_w = q_max_w * 0.5
+                            center_x = q_x + q_max_w / 2
+                            area_start_x = center_x - div_total_w * 0.75
+                            area_end_x = center_x + div_total_w * 0.75
+                            text_x = center_x - div_text_w / 2
+                            text_gap = 8
+
+                            # --- 关键修改开始 ---
+                            # 计算垂直中心线 Y 坐标：
+                            # 当前位置 + 上方留白 + 文本高度的一半
+                            mid_y = q_curr_y + padding_v + (div_text_h / 2)
+                            # --- 关键修改结束 ---
+
+                            # 4. 绘制流程
+
+                            # 绘制左侧虚线 (在 mid_y 高度绘制)
+                            left_line_end = text_x - text_gap
+                            if left_line_end > area_start_x:
+                                for lx in range(int(area_start_x), int(left_line_end), 4):
+                                    draw.point((lx, mid_y), fill=self.C_QUOTE)
+
+                            # --- 关键修改开始 ---
+                            # 绘制中间文本 (使用 anchor="lm" 实现垂直居中)
+                            # anchor="lm" 表示传入的坐标 (text_x, mid_y) 是文本的 "Left Middle" (左侧中间点)
+                            draw.text((text_x, mid_y), text_content, font=div_font, fill=self.C_QUOTE, anchor="lm")
+                            # --- 关键修改结束 ---
+
+                            # 绘制右侧虚线 (在 mid_y 高度绘制)
+                            right_line_start = text_x + div_text_w + text_gap
+                            if right_line_start < area_end_x:
+                                for lx in range(int(right_line_start), int(area_end_x), 4):
+                                    draw.point((lx, mid_y), fill=self.C_QUOTE)
+
+                            # 更新 Y 轴：加上方留空 + 文本本身高度 + 下方留空
+                            q_curr_y += padding_v + div_text_h + padding_v
+                    else:
+                        # 1. 确定字体
+                        use_small_font = '_' in spec
+                        font_size = int(font_quote.size * 0.8) if use_small_font else font_quote.size
+                        target_font = ImageFont.truetype(self.font_path, font_size) if use_small_font else font_quote
+                        target_bbox = target_font.getbbox("高")
+                        target_font_h = target_bbox[3] - target_bbox[1]
+
+                        # 2. 确定对齐方式
+                        norm_spec = spec.replace('_', '-')
+                        align = "left"  # 默认为左对齐
+                        if ":-:" in norm_spec:
+                            align = "center"
+                        elif "-:" in norm_spec:
+                            align = "right"
+
+                        # 3. 文本换行 (使用 80% 宽度)
+                        wrap_width = q_max_w * 0.8
+                        margin_w = q_max_w * 0.1
+                        wrapped_sub_lines, _ = self._process_text_wrapping(draw, text_content, target_font, wrap_width)
+
+                        # 4. 绘制换行后的每一行
+                        for sub_line in wrapped_sub_lines:
+                            sub_line_width = draw.textlength(sub_line, font=target_font)
+
+                            x_pos = q_x  # 默认是 `:-` (左对齐)
+                            if align == "center":  # `:-:` (居中)
+                                x_pos = (q_x + margin_w) + (wrap_width - sub_line_width) / 2
+                            elif align == "right":  # `-:` (右对齐)
+                                # 对齐到整个可用区域的右侧
+                                x_pos = (q_x + q_max_w) - sub_line_width
+
+                            draw.text((x_pos, q_curr_y), sub_line, font=target_font, fill=self.C_QUOTE)
+                            q_curr_y += target_font_h * 1.6
 
                 else:
                     # --- 情况 B: 普通行 (默认行为) ---
@@ -673,7 +755,7 @@ class MusicCard:
             # 来源
             if mode == self.DAILY:
                 self._draw_text_right(draw, "--来自 @" + quote_source + " 的评论", font_quote_sub, self.CONTENT_RIGHT_X,
-                                    q_curr_y + 20, self.C_SUB)
+                                      q_curr_y + 20, self.C_SUB)
 
                 # 虚线分隔符 & 文字
                 bot_sep_y = mid_y + middle_h + 10
@@ -707,20 +789,13 @@ class MusicCard:
         return bg_img
 
 
-def ttml_to_lys(content: str):
-    dom: Document = parseString(content)
-    ttml: TTML = TTML(dom)
-    orig, _ = ttml.to_lys()
-
-    return orig
-
-async def fetch_lys(music_id: str, platform: str):
+async def fetch_lines(music_id: str, platform: str):
     folder = {
         "ncm": "ncm-lyrics",
         "qq": "qq-lyrics"
     }
     url = f"{TTML_DB_URL_PREFIX}/{folder[platform]}/{music_id}.ttml"
-    print(f"正在获取 {music_id} 的 TTML 文件...")
+    print(f"正在从 {url} 获取 {music_id} 的 TTML 文件...")
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get(url) as resp:
@@ -734,49 +809,11 @@ async def fetch_lys(music_id: str, platform: str):
                     print("该 ID 所对应歌词还无人制作")
                     return None
 
-                return ttml_to_lys(text_resp)
+                return TTML(text_resp).text
     except Exception as e:
         print(f"Error: {e}")
         return None
 
-
-def lys_to_lines(lys_line: str):
-    """
-    解析歌词行，处理后，用换行符连接并返回。
-    """
-    processed_lines = []
-    line_regex = re.compile(r'^\[(\d)\](.*)$')
-
-    def process_lyric_line(_property: str, _text: str):
-        match _property:
-            case '0' | '3':
-                return "[:-:]" + _text
-            case '1' | '4':
-                return "[:-]" + _text
-            case '2' | '5':
-                return "[-:]" + _text
-            case '6':
-                return "[:_:]" + _text
-            case '7':
-                return "[:_]" + _text
-            case '8':
-                return "[_:]" + _text
-            case _:
-                return _text
-
-    for line in lys_line.strip().split('\n'):
-        line = re.sub(r"\(\d+,\d+\)", '', line.strip())
-        matches = line_regex.match(line)
-        if matches:
-            # 提取分钟、秒、毫秒和文本
-            property = matches.group(1)
-            text = matches.group(2)
-
-            # 调用函数处理并保存结果
-            processed_line = process_lyric_line(property, text)
-            processed_lines.append(processed_line)
-
-    return '\n'.join(processed_lines)
 
 # --- 逻辑控制入口 ---
 
@@ -845,7 +882,9 @@ async def generate_music_card_process(
             print("无每日推荐或获取失败，检查命令行参数...")
 
         if music_id_arg:
-            song_info = await card_gen.fetch_ncm_song_info(music_id_arg) if platform == "ncm" else await card_gen.fetch_qq_music_info(music_id_arg, qq_music_cookie)
+            song_info = await card_gen.fetch_ncm_song_info(
+                music_id_arg) if platform == "ncm" else await card_gen.fetch_qq_music_info(music_id_arg,
+                                                                                           qq_music_cookie)
             if song_info:
                 final_data.update(song_info)
         # 回退到手动 Info 参数
@@ -863,11 +902,11 @@ async def generate_music_card_process(
     # 如果 Daily API 已经填入了 quote_content，则忽略命令行 quote
     if 'quote_content' not in final_data:
         if mode == MusicCard.LYRIC:
-            lys = await fetch_lys(music_id_arg, platform)
-            if not lys:
+            lines = await fetch_lines(music_id_arg, platform)
+            if not lines:
                 print("错误: 无法获取歌曲信息 (Daily API 返回值为空, 且未提供有效 NCM ID 或 Info)")
                 return None
-            final_data['quote_content'] = lys_to_lines(lys)
+            final_data['quote_content'] = lines
         elif quote_arg and len(quote_arg) == 2:
             final_data['quote_content'] = quote_arg[0].replace('\\n', '\n')
             final_data['quote_source'] = quote_arg[1]
