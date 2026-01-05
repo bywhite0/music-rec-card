@@ -273,7 +273,7 @@ class MusicCard:
 
     @staticmethod
     def create_gradient_mask(w, h):
-        break_percent = 0.7
+        break_percent = 0.5
         break_opa = 255 * break_percent
         break_h = min(1100, h * break_percent)
         data = []
@@ -503,22 +503,39 @@ class MusicCard:
                 small_q_bbox = font_quote_small.getbbox("高")
                 small_q_font_h = small_q_bbox[3] - small_q_bbox[1]
 
-                for raw_line in quote_content.split('\n'):
-                    match = re.match(r'^\[([:_-]+)\](.*)$', raw_line.strip())
+                lines = quote_content.split('\n')
+                raw_lines = []
+                pure_center = True
+                for line in lines:
+                    match = re.match(r'^\[([:_-]+)\](.*)', line.strip())
                     if match:
                         spec, text_content = match.groups()
-                        use_small_font = '_' in spec or spec == '-'
-                        target_font = font_quote_small if use_small_font else font_quote
-                        target_font_h = small_q_font_h if use_small_font else q_font_h
-                        wrap_width = q_max_w * 0.8
-                        wrapped_sub_lines, _ = self._process_text_wrapping(temp_draw, text_content.strip(), target_font,
-                                                                           wrap_width)
-                        q_h_real += len(wrapped_sub_lines) * target_font_h * 1.6
+                        text_content = text_content.strip()
+                        raw_lines.append((spec, text_content))
+                        if spec != '-':
+                            pure_center &= spec == ':-:' or spec == ':_:'
                     else:
-                        if not raw_line.strip():
+                        raw_lines.append((None, line.strip()))
+                for spec, text_content in raw_lines:
+                    if spec:
+                        if spec == '-':
+                            if not text_content.strip():
+                                q_h_real += q_font_h * 0.25
+                            else:
+                                q_h_real += q_font_h * 0.5 + q_font_h / 1.5
+                        else:
+                            use_small_font = '_' in spec or spec == '-'
+                            target_font = font_quote_small if use_small_font else font_quote
+                            target_font_h = small_q_font_h if use_small_font else q_font_h
+                            wrap_width = q_max_w * (1 if pure_center else 0.8)
+                            wrapped_sub_lines, _ = self._process_text_wrapping(temp_draw, text_content.strip(), target_font,
+                                                                               wrap_width)
+                            q_h_real += len(wrapped_sub_lines) * target_font_h * 1.6
+                    else:
+                        if not text_content.strip():
                             q_h_real += q_font_h * 1.6
                             continue
-                        wrapped_sub_lines, _ = self._process_text_wrapping(temp_draw, raw_line, font_quote, q_max_w)
+                        wrapped_sub_lines, _ = self._process_text_wrapping(temp_draw, text_content, font_quote, q_max_w)
                         q_h_real += len(wrapped_sub_lines) * q_font_h * 1.6
 
                 if mode == self.DAILY:
@@ -631,21 +648,23 @@ class MusicCard:
             q_font_h = q_bbox[3] - q_bbox[1]
 
             # 逐行处理原始引言文本
-            for raw_line in quote_content.split('\n'):
-                # 匹配对齐标记
-                match = re.match(r'^\[([:_-]+)\](.*)', raw_line.strip())
-
+            lines = from_html_escaped(quote_content).split('\n')
+            raw_lines = []
+            pure_center = True
+            for line in lines:
+                match = re.match(r'^\[([:_-]+)\](.*)', line.strip())
                 if match:
-                    # --- 情况 A: 行首有对齐标记 ---
                     spec, text_content = match.groups()
                     text_content = text_content.strip()
-
+                    raw_lines.append((spec, text_content))
+                    if spec != '-':
+                        pure_center &= spec == ':-:' or spec == ':_:'
+                else:
+                    raw_lines.append((None, line.strip()))
+            for spec, text_content in raw_lines:
+                if spec:
                     if spec == '-':
-                        # --- 特殊处理: 分割线/小节标记 ---
-
-                        # 设定上下留空高度 (解析 "4/1" 为 1/4 行高，即 0.25)
                         padding_v = q_font_h * 0.25
-
                         if not text_content:
                             # 情况 1: 内容为空 -> 仅增加 1/4 行高的空白
                             q_curr_y += padding_v
@@ -655,7 +674,7 @@ class MusicCard:
                             # 1. 准备字体 (1/3 原大小)
                             div_font_size = int(font_quote.size / 1.5)
                             div_font_size = max(8, div_font_size)  # 最小尺寸保护
-                            div_font = ImageFont.truetype(self.font_path, div_font_size, index=self.Regular)
+                            div_font = ImageFont.truetype(self.font_path, div_font_size)
 
                             # 2. 计算文本尺寸
                             # 获取文本宽度
@@ -677,36 +696,37 @@ class MusicCard:
                             # --- 关键修改开始 ---
                             # 计算垂直中心线 Y 坐标：
                             # 当前位置 + 上方留白 + 文本高度的一半
-                            mid_y = q_curr_y + padding_v + (div_text_h / 2)
+                            div_mid_y = q_curr_y + padding_v + (div_text_h / 2)
                             # --- 关键修改结束 ---
 
                             # 4. 绘制流程
 
-                            # 绘制左侧虚线 (在 mid_y 高度绘制)
+                            # 绘制左侧虚线 (在 div_mid_y 高度绘制)
                             left_line_end = text_x - text_gap
                             if left_line_end > area_start_x:
                                 for lx in range(int(area_start_x), int(left_line_end), 4):
-                                    draw.point((lx, mid_y), fill=self.C_QUOTE)
+                                    draw.point((lx, div_mid_y), fill=self.C_QUOTE)
 
                             # --- 关键修改开始 ---
                             # 绘制中间文本 (使用 anchor="lm" 实现垂直居中)
-                            # anchor="lm" 表示传入的坐标 (text_x, mid_y) 是文本的 "Left Middle" (左侧中间点)
-                            draw.text((text_x, mid_y), text_content, font=div_font, fill=self.C_QUOTE, anchor="lm")
+                            # anchor="lm" 表示传入的坐标 (text_x, div_mid_y) 是文本的 "Left Middle" (左侧中间点)
+                            draw.text((text_x, div_mid_y), text_content, font=div_font, fill=self.C_QUOTE, anchor="lm")
                             # --- 关键修改结束 ---
 
-                            # 绘制右侧虚线 (在 mid_y 高度绘制)
+                            # 绘制右侧虚线 (在 div_mid_y 高度绘制)
                             right_line_start = text_x + div_text_w + text_gap
                             if right_line_start < area_end_x:
                                 for lx in range(int(right_line_start), int(area_end_x), 4):
-                                    draw.point((lx, mid_y), fill=self.C_QUOTE)
+                                    draw.point((lx, div_mid_y), fill=self.C_QUOTE)
 
                             # 更新 Y 轴：加上方留空 + 文本本身高度 + 下方留空
                             q_curr_y += padding_v + div_text_h + padding_v
                     else:
+                        # --- 情况 A: 行首有对齐标记 ---
                         # 1. 确定字体
                         use_small_font = '_' in spec
                         font_size = int(font_quote.size * 0.8) if use_small_font else font_quote.size
-                        target_font = ImageFont.truetype(self.font_path, font_size, index=self.Regular) if use_small_font else font_quote
+                        target_font = ImageFont.truetype(self.font_path, font_size) if use_small_font else font_quote
                         target_bbox = target_font.getbbox("高")
                         target_font_h = target_bbox[3] - target_bbox[1]
 
@@ -719,7 +739,7 @@ class MusicCard:
                             align = "right"
 
                         # 3. 文本换行 (使用 80% 宽度)
-                        wrap_width = q_max_w * 0.8
+                        wrap_width = q_max_w * (1 if pure_center else 0.8)
                         margin_w = q_max_w * 0.1
                         wrapped_sub_lines, _ = self._process_text_wrapping(draw, text_content, target_font, wrap_width)
 
@@ -729,7 +749,7 @@ class MusicCard:
 
                             x_pos = q_x  # 默认是 `:-` (左对齐)
                             if align == "center":  # `:-:` (居中)
-                                x_pos = (q_x + margin_w) + (wrap_width - sub_line_width) / 2
+                                x_pos = (q_x + margin_w * int(not pure_center)) + (wrap_width - sub_line_width) / 2
                             elif align == "right":  # `-:` (右对齐)
                                 # 对齐到整个可用区域的右侧
                                 x_pos = (q_x + q_max_w) - sub_line_width
@@ -739,12 +759,12 @@ class MusicCard:
 
                 else:
                     # --- 情况 B: 普通行 (默认行为) ---
-                    if not raw_line:  # 处理空行
+                    if not text_content:  # 处理空行
                         q_curr_y += q_font_h * 1.6
                         continue
 
                     # 1. 文本换行 (使用 100% 宽度)
-                    wrapped_sub_lines, _ = self._process_text_wrapping(draw, raw_line, font_quote, q_max_w)
+                    wrapped_sub_lines, _ = self._process_text_wrapping(draw, text_content, font_quote, q_max_w)
 
                     # 2. 绘制换行后的每一行
                     for sub_line in wrapped_sub_lines:
@@ -794,6 +814,14 @@ class MusicCard:
         #    bg_img.paste(ext_qr, (self.MARGIN_SIDE, int(outer_y)-5), ext_qr)
 
         return bg_img
+
+def from_html_escaped(text: str) -> str:
+    return (text
+            .replace("&lt;", "<")
+            .replace("&gt;", ">")
+            .replace("&amp;", "&")
+            .replace("&quot;", "\"")
+            .replace("&#39;", "'"))
 
 
 async def fetch_lines(music_id: str, platform: str):
