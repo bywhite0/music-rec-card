@@ -21,6 +21,12 @@ class MusicCard:
     DAILY = "daily"
     CARD = "card"
     LYRIC = "lyric"
+    Regular = 2
+    Medium = 5
+    Semibold = 8
+    Light = 11
+    Thin = 14
+    Ultralight = 17
 
     def __init__(self, font_path: str, platform: str = "ncm"):
         self.font_path = font_path
@@ -433,17 +439,18 @@ class MusicCard:
         cover_img_raw = (await self.download_image(cover_url)).convert("RGB")
         theme_rgb = self.get_dominant_color(cover_img_raw)
         print(f"识别主题色: {theme_rgb}")
+        
 
         try:
-            font_title = ImageFont.truetype(self.font_path, 44, index=8)
-            font_artist = ImageFont.truetype(self.font_path, 26, index=8)
-            font_date_num = ImageFont.truetype(self.font_path, 90, index=5)
-            font_date_month = ImageFont.truetype(self.font_path, 40, index=5)
-            font_quote = ImageFont.truetype(self.font_path, 34, index=2)
-            font_quote_sub = ImageFont.truetype(self.font_path, 26, index=11)
-            font_deco = ImageFont.truetype(self.font_path, 100, index=5)
-            font_fc = ImageFont.truetype(self.font_path, 32, index=32)
-            font_fo = ImageFont.truetype(self.font_path, 22, index=2)
+            font_title = ImageFont.truetype(self.font_path, 44, index=self.Semibold)
+            font_artist = ImageFont.truetype(self.font_path, 26, index=self.Semibold)
+            font_date_num = ImageFont.truetype(self.font_path, 90, index=self.Medium)
+            font_date_month = ImageFont.truetype(self.font_path, 40, index=self.Medium)
+            font_quote = ImageFont.truetype(self.font_path, 34, index=self.Regular)
+            font_quote_sub = ImageFont.truetype(self.font_path, 26, index=self.Light)
+            font_deco = ImageFont.truetype(self.font_path, 100, index=self.Medium)
+            font_fc = ImageFont.truetype(self.font_path, 32, index=self.Thin)
+            font_fo = ImageFont.truetype(self.font_path, 22, index=self.Regular)
         except IOError:
             print(f"字体加载失败: {self.font_path}")
             return Image.new('RGB', (100, 100), color='red')
@@ -490,7 +497,7 @@ class MusicCard:
 
                 # -- 精确计算引言/歌词区域高度 --
                 q_h_real = 0
-                font_quote_small = ImageFont.truetype(self.font_path, int(font_quote.size * 0.8))
+                font_quote_small = ImageFont.truetype(self.font_path, int(font_quote.size * 0.8), index=self.Regular)
                 q_bbox = font_quote.getbbox("高")
                 q_font_h = q_bbox[3] - q_bbox[1]
                 small_q_bbox = font_quote_small.getbbox("高")
@@ -648,7 +655,7 @@ class MusicCard:
                             # 1. 准备字体 (1/3 原大小)
                             div_font_size = int(font_quote.size / 1.5)
                             div_font_size = max(8, div_font_size)  # 最小尺寸保护
-                            div_font = ImageFont.truetype(self.font_path, div_font_size)
+                            div_font = ImageFont.truetype(self.font_path, div_font_size, index=self.Regular)
 
                             # 2. 计算文本尺寸
                             # 获取文本宽度
@@ -699,7 +706,7 @@ class MusicCard:
                         # 1. 确定字体
                         use_small_font = '_' in spec
                         font_size = int(font_quote.size * 0.8) if use_small_font else font_quote.size
-                        target_font = ImageFont.truetype(self.font_path, font_size) if use_small_font else font_quote
+                        target_font = ImageFont.truetype(self.font_path, font_size, index=self.Regular) if use_small_font else font_quote
                         target_bbox = target_font.getbbox("高")
                         target_font_h = target_bbox[3] - target_bbox[1]
 
