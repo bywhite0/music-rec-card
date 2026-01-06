@@ -20,30 +20,33 @@
 ### 命令行参数
 
 ```
-usage: music_card_gen.py [-h] [--platform {ncm,qq}]
+usage: music_card_gen.py [-h] [--platform {ncm,qq,am}]
                          [--mode {daily,card,lyric}] [--date DATE]
                          [--info TITLE ARTIST COVER_URL]
                          [--quote CONTENT SOURCE] [--inner-blurred] [--qrcode]
                          [--qq-music-cookie QQ_MUSIC_COOKIE]
-                         [--music-id MUSIC_ID]
+                         [--music-id MUSIC_ID] [--am-storefront AM_STOREFRONT]
 
 生成仿网易云音乐风格的音乐卡片
 
 options:
   -h, --help            show this help message and exit
-  --platform {ncm,qq}   获取歌曲的平台 ncm/qq (默认: ncm)
+  --platform {ncm,qq,am}
+                        获取歌曲的平台 ncm/qq/am
   --mode {daily,card,lyric}
-                        制卡模式 (默认: daily)
-  --date DATE           日期 YYYY-MM-DD (默认: 当前日期)
+                        制卡模式
+  --date DATE           日期 YYYY-MM-DD
   --info TITLE ARTIST COVER_URL
                         手动指定歌曲信息
   --quote CONTENT SOURCE
                         引言内容与来源
-  --inner-blurred       卡片内部背景模糊 (默认: 关闭)
-  --qrcode              生成二维码 (默认: 关闭)
+  --inner-blurred       卡片内部背景模糊 (默认不启用)
+  --qrcode              生成二维码 (默认不启用)
   --qq-music-cookie QQ_MUSIC_COOKIE
                         QQ 音乐 Cookie
   --music-id MUSIC_ID   歌曲 ID
+  --am-storefront AM_STOREFRONT
+                        Apple Music 商店地区 (默认 cn)
 ```
 
 在其他 Python 脚本中调用（确保 `music_card_gen.py` 在同目录）：
