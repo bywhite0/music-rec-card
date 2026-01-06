@@ -273,9 +273,18 @@ class MusicCard:
 
     @staticmethod
     def create_gradient_mask(w, h):
+        ending = 0.9
+        limit = 255 * ending
         break_percent = 0.5
-        break_opa = 255 * break_percent
-        break_h = min(1100, h * break_percent)
+        break_opa = limit * break_percent
+        break_h = min(1100, h * break_percent * ending)
+
+        # 【新增】定义非线性强度 (指数)
+        # exponent = 2.0  -> 平滑 (推荐)
+        # exponent = 3.0  -> 更加平滑，中间部分更透
+        # exponent = 0.5  -> 甚至比线性更加激进 (一过 break_h 就迅速变黑)
+        exponent = 1.5
+
         data = []
         for y in range(h):
             if y < break_h:
@@ -283,11 +292,17 @@ class MusicCard:
             else:
                 denom = h - break_h
                 ratio = (y - break_h) / denom if denom > 0 else 1
-                val = int(break_opa + (255 - break_opa) * ratio)
+
+                # ==========【核心修改】==========
+                # 对 ratio 进行非线性处理
+                ratio = ratio ** exponent
+                # ==============================
+
+                val = int(break_opa + (limit - break_opa) * ratio)
             data.append(val)
 
         gradient = Image.new('L', (1, h))
-        gradient.putdata(data)  # 一次性写入数据，比 putpixel 快
+        gradient.putdata(data)
         return gradient.resize((w, h))
 
     @staticmethod
@@ -674,7 +689,7 @@ class MusicCard:
                             # 1. 准备字体 (1/3 原大小)
                             div_font_size = int(font_quote.size / 1.5)
                             div_font_size = max(8, div_font_size)  # 最小尺寸保护
-                            div_font = ImageFont.truetype(self.font_path, div_font_size)
+                            div_font = ImageFont.truetype(self.font_path, div_font_size, index=self.Regular)
 
                             # 2. 计算文本尺寸
                             # 获取文本宽度
@@ -726,7 +741,7 @@ class MusicCard:
                         # 1. 确定字体
                         use_small_font = '_' in spec
                         font_size = int(font_quote.size * 0.8) if use_small_font else font_quote.size
-                        target_font = ImageFont.truetype(self.font_path, font_size) if use_small_font else font_quote
+                        target_font = ImageFont.truetype(self.font_path, font_size, index=self.Regular) if use_small_font else font_quote
                         target_bbox = target_font.getbbox("高")
                         target_font_h = target_bbox[3] - target_bbox[1]
 
