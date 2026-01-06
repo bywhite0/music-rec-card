@@ -656,6 +656,14 @@ class MusicCard:
                 draw.text((date_x, mid_y + (m_bbox[3] - m_bbox[1]) + 10), str(date_day_int), font=font_date_num,
                           fill=self.C_MAIN)
 
+            # 装饰引号
+            deco_x = self.CONTENT_RIGHT_X - 80
+            deco_y = total_img_h - 140 if mode == self.DAILY else total_img_h - 180
+            deco_color = self.get_adaptive_deco_color(
+                bg_img.crop((int(deco_x), int(deco_y), int(deco_x + 60), int(deco_y + 60))), theme_rgb
+            )
+            draw.text((deco_x, deco_y), "”", font=font_deco, fill=deco_color)
+
             # 引言
             q_curr_y = mid_y + 5
             # 获取默认字体的行高
@@ -786,13 +794,6 @@ class MusicCard:
                         draw.text((q_x, q_curr_y), sub_line, font=font_quote, fill=self.C_QUOTE)
                         q_curr_y += q_font_h * 1.6
 
-            # 装饰引号
-            deco_x = self.CONTENT_RIGHT_X - 80
-            deco_y = q_curr_y - 20 if mode == self.DAILY else q_curr_y - 60
-            deco_color = self.get_adaptive_deco_color(
-                bg_img.crop((int(deco_x), int(deco_y), int(deco_x + 60), int(deco_y + 60))), theme_rgb
-            )
-            draw.text((deco_x, deco_y), "”", font=font_deco, fill=deco_color)
 
             # 来源
             if mode == self.DAILY:
