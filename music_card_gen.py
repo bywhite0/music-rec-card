@@ -28,9 +28,10 @@ class MusicCard:
     Thin = 14
     Ultralight = 17
 
-    def __init__(self, font_path: str, platform: str = "ncm"):
+    def __init__(self, font_path: str, platform: str = "ncm", am_storefront: str = "cn"):
         self.font_path = font_path
         self.platform = platform
+        self.am_storefront = am_storefront
 
         # 布局常量
         self.W = 1000
@@ -137,6 +138,53 @@ class MusicCard:
                     }
         except Exception as e:
             print(f"NCM API Error: {e}")
+            return None
+
+    @staticmethod
+    async def fetch_apple_music_info(music_id: str, country: str = "cn") -> Optional[Dict]:
+        """[异步] 获取 Apple Music (iTunes API) 歌曲详情"""
+        try:
+            from curl_cffi.requests import AsyncSession
+        except ImportError:
+            print("请先安装 curl_cffi 以使用 Apple Music 功能: pip install curl_cffi")
+            return None
+
+        base_url = "https://itunes.apple.com/lookup"
+        params = {
+            "id": music_id,
+            "entity": "song",
+            "country": country,
+            "limit": 1
+        }
+        print(f"正在从 Apple Music API 获取 ID {music_id} 的信息...")
+        try:
+            async with AsyncSession(impersonate="chrome120") as session:
+                response = await session.get(base_url, params=params)
+                if response.status_code != 200:
+                    print(f"AM API Error: {response.status_code}")
+                    return None
+                
+                data = response.json()
+                if data["resultCount"] > 0:
+                    song_data = data["results"][0]
+                    
+                    # 优化：iTunes API 默认返回 100x100 的封面，这里手动替换为高清大图
+                    cover_url = song_data.get("artworkUrl100", "")
+                    if cover_url:
+                        cover_url = cover_url.replace("100x100bb", "1024x1024bb")
+                    
+                    return {
+                        "title": song_data.get('trackName'),
+                        "artist": song_data.get('artistName'),
+                        "cover_url": cover_url,
+                        "music_id": str(song_data.get('trackId')),
+                        "song_url": song_data.get('trackViewUrl')
+                    }
+                else:
+                    print(f"未找到歌曲 ID: {music_id}")
+                    return None
+        except Exception as e:
+            print(f"AM API Error: {e}")
             return None
 
     @staticmethod
@@ -615,7 +663,14 @@ class MusicCard:
 
         # 二维码 (头部右侧)
         if show_qrcode and music_id:
-            song_url = f"https://music.163.com/#/song?id={music_id}" if self.platform == "ncm" else f"https://y.qq.com/n/ryqq_v2/songDetail/{music_id}"
+            song_url = data.get('song_url')
+            if not song_url:
+                if self.platform == "ncm":
+                    song_url = f"https://music.163.com/#/song?id={music_id}"
+                elif self.platform == "qq":
+                    song_url = f"https://y.qq.com/n/ryqq_v2/songDetail/{music_id}"
+                elif self.platform == "am":
+                    song_url = f"https://music.apple.com/{self.am_storefront}/song/{music_id}"
 
             # 1. 计算二维码的精确位置和区域
             qr_x = int(self.CONTENT_RIGHT_X - QR_SIZE)
@@ -843,8 +898,13 @@ def from_html_escaped(text: str) -> str:
 async def fetch_lines(music_id: str, platform: str):
     folder = {
         "ncm": "ncm-lyrics",
-        "qq": "qq-lyrics"
+        "qq": "qq-lyrics",
+        "am": "am-lyrics"
     }
+    if platform not in folder:
+        print(f"目前不支持平台 {platform} 的歌词获取")
+        return None
+        
     url = f"{TTML_DB_URL_PREFIX}/{folder[platform]}/{music_id}.ttml"
     print(f"正在从 {url} 获取 {music_id} 的 TTML 文件...")
     try:
@@ -878,13 +938,14 @@ async def generate_music_card_process(
         inner_blurred: bool = False,
         show_qrcode: bool = False,
         font_path: str = "PingFang.ttc",
-        qq_music_cookie: str = ""
+        qq_music_cookie: str = "",
+        am_storefront: str = "cn"
 ) -> Optional[Image.Image]:
     """
     逻辑控制中心：根据优先级获取数据并调用绘图
     优先级：每日推荐 API > 命令行 MUSIC ID > 命令行手动 Info
     """
-    card_gen = MusicCard(font_path, platform)
+    card_gen = MusicCard(font_path, platform, am_storefront)
     final_data = {}
 
     # 初始化日期对象
@@ -908,9 +969,14 @@ async def generate_music_card_process(
         rec_music_id = daily_data.get('music_id')
         if rec_music_id:
             # 补充歌曲信息
-            song_info = await card_gen.fetch_ncm_song_info(
-                rec_music_id) if platform == "ncm" else await card_gen.fetch_qq_music_info(rec_music_id,
-                                                                                           qq_music_cookie)
+            song_info = None
+            if platform == "ncm":
+                song_info = await card_gen.fetch_ncm_song_info(rec_music_id)
+            elif platform == "qq":
+                song_info = await card_gen.fetch_qq_music_info(rec_music_id, qq_music_cookie)
+            elif platform == "am":
+                song_info = await card_gen.fetch_apple_music_info(rec_music_id, country=am_storefront)
+
             if song_info:
                 cover = daily_data.get('cover_path')
                 if cover and cover != "/tj/wfm.jpg":
@@ -933,9 +999,14 @@ async def generate_music_card_process(
             print("无每日推荐或获取失败，检查命令行参数...")
 
         if music_id_arg:
-            song_info = await card_gen.fetch_ncm_song_info(
-                music_id_arg) if platform == "ncm" else await card_gen.fetch_qq_music_info(music_id_arg,
-                                                                                           qq_music_cookie)
+            song_info = None
+            if platform == "ncm":
+                song_info = await card_gen.fetch_ncm_song_info(music_id_arg)
+            elif platform == "qq":
+                song_info = await card_gen.fetch_qq_music_info(music_id_arg, qq_music_cookie)
+            elif platform == "am":
+                song_info = await card_gen.fetch_apple_music_info(music_id_arg, country=am_storefront)
+                
             if song_info:
                 final_data.update(song_info)
         # 回退到手动 Info 参数
@@ -974,7 +1045,7 @@ async def generate_music_card_process(
 
 async def main():
     parser = argparse.ArgumentParser(description="生成仿网易云音乐风格的音乐卡片")
-    parser.add_argument("--platform", type=str, choices=["ncm", "qq"], default="ncm", help="获取歌曲的平台 ncm/qq")
+    parser.add_argument("--platform", type=str, choices=["ncm", "qq", "am"], default="ncm", help="获取歌曲的平台 ncm/qq/am")
     parser.add_argument("--mode", type=str, choices=["daily", "card", "lyric"], default="daily", help="制卡模式")
     parser.add_argument("--date", type=str, default=datetime.now().strftime("%Y-%m-%d"), help="日期 YYYY-MM-DD")
     parser.add_argument("--info", nargs=3, metavar=('TITLE', 'ARTIST', 'COVER_URL'), help="手动指定歌曲信息")
@@ -983,6 +1054,7 @@ async def main():
     parser.add_argument("--qrcode", action="store_true", help="生成二维码")
     parser.add_argument("--qq-music-cookie", type=str, help="QQ 音乐 Cookie")
     parser.add_argument("--music-id", type=str, help="歌曲 ID")
+    parser.add_argument("--am-storefront", type=str, default="cn", help="Apple Music 商店地区 (默认 cn)")
 
     args = parser.parse_args()
 
@@ -995,7 +1067,8 @@ async def main():
         quote_arg=args.quote,
         inner_blurred=args.inner_blurred,
         show_qrcode=args.qrcode,
-        qq_music_cookie=args.qq_music_cookie
+        qq_music_cookie=args.qq_music_cookie,
+        am_storefront=args.am_storefront
     )
 
     if img:
