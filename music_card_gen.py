@@ -12,6 +12,8 @@ import aiohttp
 import qrcode
 from PIL import Image, ImageDraw, ImageFont, ImageFilter, ImageOps, ImageEnhance
 
+import emoji
+
 from ttml.ttml import TTML
 
 TTML_DB_URL_PREFIX = "https://amlldb.bikonoo.com"
@@ -566,7 +568,7 @@ class MusicCard:
                 small_q_bbox = font_quote_small.getbbox("高")
                 small_q_font_h = small_q_bbox[3] - small_q_bbox[1]
 
-                lines = quote_content.split('\n')
+                lines = clean_emojis(quote_content).split('\n')
                 raw_lines = []
                 pure_center = True
                 for line in lines:
@@ -726,7 +728,7 @@ class MusicCard:
             q_font_h = q_bbox[3] - q_bbox[1]
 
             # 逐行处理原始引言文本
-            lines = from_html_escaped(quote_content).split('\n')
+            lines = clean_emojis(from_html_escaped(quote_content)).split('\n')
             raw_lines = []
             pure_center = True
             for line in lines:
@@ -893,6 +895,15 @@ def from_html_escaped(text: str) -> str:
             .replace("&amp;", "&")
             .replace("&quot;", "\"")
             .replace("&#39;", "'"))
+
+def clean_emojis(text: str) -> str:
+    language_pack: Dict[str, str] = {
+        data['en']: em
+        for em, data in emoji.EMOJI_DATA.items()
+        if 'en' in data and data['status'] <= emoji.STATUS['fully_qualified']
+    }
+    emoji_regex = '|'.join(map(re.escape, sorted(language_pack.values(), key=len, reverse=True)))
+    return re.sub(emoji_regex, "�", text)
 
 
 async def fetch_lines(music_id: str, platform: str):

@@ -3,3 +3,4 @@ curl_cffi==0.14.0
 pillow==11.3.0
 qrcode[pil]==8.2
 lxml
+emoji
