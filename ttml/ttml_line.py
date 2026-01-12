@@ -2,6 +2,7 @@ from re import Pattern, compile
 
 from lxml.etree import _Element
 
+from ttml.ttml_time import TTMLTime
 from ttml.utils import qname  # 假设 NS_MAP 和 qname 定义在 ttml.py 或 common
 
 
@@ -13,6 +14,7 @@ class TTMLLine:
         # 对应 itunes:key
         self._key: str = element.get(qname('itunes', 'key'))
 
+        self._begin: int | None = None
         self._is_duet: bool = False
         self._orig_line: str = ""
 
@@ -33,6 +35,7 @@ class TTMLLine:
         for child in element:
             # 对应 ttm:role
             role: str = child.get(qname('ttm', 'role'))
+            self.begin = child.get('begin')
 
             match role:
                 case "x-bg":
@@ -58,20 +61,26 @@ class TTMLLine:
                 self._orig_line = TTMLLine.brackets.match(self._orig_line.strip()).group(1).strip()
 
     def to_text(self, have_duet: bool) -> str:
-        text: list[str] = []
+        orig_text: list[str] = []
+        ts_text: list[str] = []
         head: str = ("[-:]" if self._is_duet else "[:-]") if have_duet else "[:-:]"
 
         if len(self._orig_line):
-            text.append(f"{head}{self._orig_line}")
+            orig_text.append(f"{head}{self._orig_line}")
         head = head.replace('-', '_')
         if self._bg_line and self._bg_line._orig_line:
-            text.append(f"{head}({self._bg_line._orig_line})")
+            orig_text.append(f"{head}({self._bg_line._orig_line})")
         if self._ts_line:
-            text.append(f"{head}{self._ts_line}")
+            ts_text.append(f"{head}{self._ts_line}")
         if self._bg_line and self._bg_line._ts_line:
-            text.append(f"{head}({self._bg_line._ts_line})")
+            ts_text.append(f"{head}({self._bg_line._ts_line})")
 
-        return '\n'.join(text)
+        if self._bg_line and self._bg_line.begin < self.begin:
+            orig_text[0], orig_text[-1] = orig_text[-1], orig_text[0]
+            if len(ts_text):
+                ts_text[0], ts_text[-1] = ts_text[-1], ts_text[0]
+
+        return '\n'.join(orig_text + ts_text)
 
     def append_ts(self, text: str, lang: str) -> None:
         """
@@ -111,6 +120,15 @@ class TTMLLine:
             self._ts_line = None
         if self._bg_line:
             self._bg_line.filter_ts(lang)
+
+    @property
+    def begin(self) -> int:
+        return 0 if self._begin is None else self._begin
+
+    @begin.setter
+    def begin(self, begin: str | None) -> None:
+        if self._begin is None:
+            self._begin = int(TTMLTime(begin))
 
     @property
     def key(self) -> str:
