@@ -110,36 +110,97 @@ class MusicCard:
             return None
 
     @staticmethod
-    async def fetch_qq_music_info(music_id: str, cookie: str) -> Optional[Dict]:
+    async def get_final_url(
+            url: str,
+            max_redirects: int = 10,
+            timeout: int = 30
+    ) -> Optional[str]:
+        """
+        获取URL的最终目标地址（简化版本）
+
+        Args:
+            url: 初始URL
+            max_redirects: 最大重定向次数
+            timeout: 超时时间（秒）
+
+        Returns:
+            最终重定向的URL，如果出错返回None
+        """
+        try:
+            timeout_obj = aiohttp.ClientTimeout(total=timeout)
+
+            async with aiohttp.ClientSession(timeout=timeout_obj) as session:
+                # 自动跟随重定向，获取最终URL
+                async with session.get(
+                        url,
+                        allow_redirects=True,
+                        max_redirects=max_redirects
+                ) as response:
+                    return str(response.url)
+
+        except Exception as e:
+            print(f"获取最终URL时出错: {e}")
+            return None
+
+    @staticmethod
+    async def fetch_qq_music_info(music_id: str) -> Optional[Dict]:
         """[异步] 获取 QQ 音乐歌曲详情"""
-        url = f"https://y.qq.com/n/ryqq_v2/songDetail/{music_id}"
-        headers = {
-            "Accept": "*/*",
-            "Connection": "keep-alive",
-            "Cookie": cookie,
-            "User-Agent": """Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36"""
-        }
+        # match ^[0-9a-zA-Z]+$
+        if not re.match(r"^[0-9a-zA-Z]+$", music_id):
+            # match u\?__=[0-9a-zA-Z]
+            if re.match(r"^u\?__=[0-9a-zA-Z]+$", music_id):
+                org_url = await MusicCard.get_final_url(music_id)
+                if org_url is None:
+                    return None
+                music_id = org_url
+
+            # (songDetail/|songmid=)([0-9a-zA-Z]+)
+            match = re.search(r"(songDetail/|songmid=)([0-9a-zA-Z]+)", music_id)
+            if match:
+                music_id = match.group(2)
+            else:
+                return None
+
         print(f"正在访问 QQ 音乐网页端获取 ID {music_id} 的信息...")
         try:
             async with aiohttp.ClientSession() as session:
-                async with session.get(url, headers=headers) as resp:
+                req_body = {
+                        "comm": {
+                            "ct": "26",
+                            "cv": "2010101",
+                            "v": "2010101"
+                        },
+                        "req": {
+                            "module": "music.trackInfo.UniformRuleCtrl",
+                            "method": "CgiGetTrackInfo",
+                            "param": {
+                                "types": [
+                                    1
+                                ],
+                                "ctx": 0
+                            }
+                        }
+                    }
+                if music_id.startswith('00'):
+                    req_body['req']['param']['mids'] = [str(music_id)]
+                else:
+                    req_body['req']['param']['ids'] = [int(music_id)]
+                async with session.post("""https://u.y.qq.com/cgi-bin/musicu.fcg""", json=req_body) as resp:
                     if resp.status != 200: return None
                     text_resp = await resp.text()
-                    begin_index = text_resp.find("""window.__INITIAL_DATA__ =""") + 25
-                    end_index = text_resp.find("""</script>""", begin_index)
-                    if begin_index == 24 or end_index == -1 or end_index <= begin_index: return None
-                    data = json.loads(text_resp[begin_index: end_index].replace('undefined', 'null'))
-                    if not data.get('detail'): return None
-                    song = data['songList'][0]
+                    if not text_resp: return None
+                    data = json.loads(text_resp)
+                    if not data.get('req'): return None
+                    song = data['req']['data']['tracks'][0]
                     return {
-                        "title": f"{song['title']} ({song['subtitle']})" if song['subtitle'] and len(
-                            song['subtitle']) else song['title'],
+                        "title": f"{song['title']} ({song['subtitle']})" if (song['subtitle'] and len(
+                            song['subtitle'])) else song['title'],
                         "artist": " / ".join([singer['name'] for singer in song['singer']]),
                         "cover_url": f"https://y.qq.com/music/photo_new/T002R1200x1200M000{song['album']['mid']}.jpg",
                         "music_id": music_id
                     }
         except Exception as e:
-            print(f"NCM API Error: {e}")
+            print(f"QM API Error: {e}")
             return None
 
     @staticmethod
@@ -949,7 +1010,6 @@ async def generate_music_card_process(
         inner_blurred: bool = False,
         show_qrcode: bool = False,
         font_path: str = "PingFang.ttc",
-        qq_music_cookie: str = "",
         am_storefront: str = "cn"
 ) -> Optional[Image.Image]:
     """
@@ -984,7 +1044,7 @@ async def generate_music_card_process(
             if platform == "ncm":
                 song_info = await card_gen.fetch_ncm_song_info(rec_music_id)
             elif platform == "qq":
-                song_info = await card_gen.fetch_qq_music_info(rec_music_id, qq_music_cookie)
+                song_info = await card_gen.fetch_qq_music_info(rec_music_id)
             elif platform == "am":
                 song_info = await card_gen.fetch_apple_music_info(rec_music_id, country=am_storefront)
 
@@ -1014,7 +1074,7 @@ async def generate_music_card_process(
             if platform == "ncm":
                 song_info = await card_gen.fetch_ncm_song_info(music_id_arg)
             elif platform == "qq":
-                song_info = await card_gen.fetch_qq_music_info(music_id_arg, qq_music_cookie)
+                song_info = await card_gen.fetch_qq_music_info(music_id_arg)
             elif platform == "am":
                 song_info = await card_gen.fetch_apple_music_info(music_id_arg, country=am_storefront)
                 
@@ -1063,7 +1123,6 @@ async def main():
     parser.add_argument("--quote", nargs=2, metavar=('CONTENT', 'SOURCE'), help="引言内容与来源")
     parser.add_argument("--inner-blurred", action="store_true", help="卡片内部背景模糊")
     parser.add_argument("--qrcode", action="store_true", help="生成二维码")
-    parser.add_argument("--qq-music-cookie", type=str, help="QQ 音乐 Cookie")
     parser.add_argument("--music-id", type=str, help="歌曲 ID")
     parser.add_argument("--am-storefront", type=str, default="cn", help="Apple Music 商店地区 (默认 cn)")
 
@@ -1078,7 +1137,6 @@ async def main():
         quote_arg=args.quote,
         inner_blurred=args.inner_blurred,
         show_qrcode=args.qrcode,
-        qq_music_cookie=args.qq_music_cookie,
         am_storefront=args.am_storefront
     )
 

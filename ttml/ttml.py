@@ -1,3 +1,4 @@
+import unicodedata
 from lxml.etree import _Element, fromstring, XMLSyntaxError
 
 from ttml.ttml_error import TTMLError
@@ -24,6 +25,7 @@ class TTML:
             return  # 虽然 throw_xml_error 可能会 raise，但写上 return 保证静态分析逻辑通畅
 
         self._have_duet: bool = False
+        self._songwriter: set[str] = set[str]()
         self._lines: list[TTMLLine] = []
         self._parts: list[Part] = []
 
@@ -35,6 +37,18 @@ class TTML:
         # 使用 XPath 查找元素，传入 namespaces 字典
         # 注意：因为 xmlns="http://www.w3.org/ns/ttml" 是默认命名空间
         # 所以在 xpath 中必须使用我们定义的前缀 'tt' 来查找标准标签
+
+        head_list = tt.xpath(".//tt:head", namespaces=NS_MAP)
+        if head_list:
+            songwriters: list[_Element] = head_list[0].xpath(".//*[local-name()='songwriter']")
+            for songwriter in songwriters:
+                self._songwriter.add(songwriter.text)
+
+            metas: list[_Element] = tt.xpath(".//*[local-name()='meta']")
+            for meta in metas:
+                key: str = meta.get('key')
+                if key and key.upper() in ['LYRIC', 'LYRICS', 'SONGWRITER', 'SONGWRITERS', '歌词', '作词', '词曲', '词曲作者', '创作者', '填詞', '歌詞', '가사']:
+                    self._songwriter.add(meta.get('value'))
 
         # 查找 tt -> body (通常 body 是 tt 的直接子元素，用 / 或 .// 均可，这里用 .// 更稳健)
         body_list = tt.xpath(".//tt:body", namespaces=NS_MAP)
@@ -109,10 +123,33 @@ class TTML:
         else:
             TTMLError.throw_dom_error()
 
+    @staticmethod
+    def join_strings_smartly(strings: set[str]) -> str:
+        # 定义判定为“全角/宽字符”的属性：
+        # 'F' (Fullwidth), 'W' (Wide), 'A' (Ambiguous)
+        # 通常 'F' 和 'W' 是最确定的全角字符
+        full_width_categories = {'F', 'W', 'A'}
+
+        has_full_width = False
+        for s in strings:
+            for char in s:
+                if unicodedata.east_asian_width(char) in full_width_categories:
+                    has_full_width = True
+                    break
+            if has_full_width:
+                break
+
+        # 根据判断结果进行 Join
+        delimiter = "、" if has_full_width else ", "
+        colon = "：" if has_full_width else ": "
+        return colon + delimiter.join(strings)
+
     @property
     def text(self) -> str:
         text: list[str] = []
         index = 0
+        if len(self._songwriter) != 0:
+            text.append(f"[:_:]创作者{self.join_strings_smartly(self._songwriter)}")
         for part in self._parts:
             count = part.count
             text.append(f"[-]{part.name}")
