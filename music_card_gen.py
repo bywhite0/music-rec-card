@@ -148,7 +148,7 @@ class MusicCard:
         # match ^[0-9a-zA-Z]+$
         if not re.match(r"^[0-9a-zA-Z]+$", music_id):
             # match u\?__=[0-9a-zA-Z]
-            if re.match(r"^u\?__=[0-9a-zA-Z]+$", music_id):
+            if re.findall(r"u\?__=[0-9a-zA-Z]", music_id):
                 org_url = await MusicCard.get_final_url(music_id)
                 if org_url is None:
                     return None
@@ -1011,7 +1011,7 @@ async def generate_music_card_process(
         show_qrcode: bool = False,
         font_path: str = "PingFang.ttc",
         am_storefront: str = "cn"
-) -> Optional[Image.Image]:
+) -> Optional[tuple[Image.Image, str]]:
     """
     逻辑控制中心：根据优先级获取数据并调用绘图
     优先级：每日推荐 API > 命令行 MUSIC ID > 命令行手动 Info
@@ -1095,7 +1095,7 @@ async def generate_music_card_process(
     # 如果 Daily API 已经填入了 quote_content，则忽略命令行 quote
     if 'quote_content' not in final_data:
         if mode == MusicCard.LYRIC:
-            lines = await fetch_lines(music_id_arg, platform)
+            lines = await fetch_lines(final_data['music_id'], platform)
             if not lines:
                 print("错误: 无法获取歌曲信息 (Daily API 返回值为空, 且未提供有效 NCM ID 或 Info)")
                 return None
@@ -1109,7 +1109,7 @@ async def generate_music_card_process(
             final_data['quote_source'] = "RuriChan"
 
     # 生成图片
-    return await card_gen.generate(final_data, inner_blurred, show_qrcode, mode)
+    return (await card_gen.generate(final_data, inner_blurred, show_qrcode, mode)), final_data['music_id']
 
 
 # --- 命令行入口 ---
@@ -1128,7 +1128,7 @@ async def main():
 
     args = parser.parse_args()
 
-    img = await generate_music_card_process(
+    img, music_id = await generate_music_card_process(
         platform=args.platform,
         mode=args.mode,
         date_str=args.date,
@@ -1144,9 +1144,9 @@ async def main():
         filename = ''
         match args.mode:
             case MusicCard.LYRIC:
-                filename = f"music_lyric_{args.music_id}.png"
+                filename = f"music_lyric_{music_id}.png"
             case MusicCard.CARD:
-                filename = f"music_card_{args.music_id}.png"
+                filename = f"music_card_{music_id}.png"
             case MusicCard.DAILY:
                 filename = f"music_card_{args.date}.png"
         img.save(filename)
