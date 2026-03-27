@@ -1109,7 +1109,7 @@ async def generate_music_card_process(
             final_data['quote_source'] = "RuriChan"
 
     # 生成图片
-    return (await card_gen.generate(final_data, inner_blurred, show_qrcode, mode)), final_data['music_id']
+    return (await card_gen.generate(final_data, inner_blurred, show_qrcode, mode)), (final_data['music_id'] if 'music_id' in final_data else 0)
 
 
 # --- 命令行入口 ---
