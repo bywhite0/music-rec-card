@@ -20,11 +20,10 @@
 ### 命令行参数
 
 ```
-usage: music_card_gen.py [-h] [--platform {ncm,qq,am}]
+usage: python -m music_card [-h] [--platform {ncm,qq,am}]
                          [--mode {daily,card,lyric}] [--date DATE]
                          [--info TITLE ARTIST COVER_URL]
                          [--quote CONTENT SOURCE] [--inner-blurred] [--qrcode]
-                         [--qq-music-cookie QQ_MUSIC_COOKIE]
                          [--music-id MUSIC_ID] [--am-storefront AM_STOREFRONT]
 
 生成仿网易云音乐风格的音乐卡片
@@ -42,18 +41,16 @@ options:
                         引言内容与来源
   --inner-blurred       卡片内部背景模糊 (默认不启用)
   --qrcode              生成二维码 (默认不启用)
-  --qq-music-cookie QQ_MUSIC_COOKIE
-                        QQ 音乐 Cookie
   --music-id MUSIC_ID   歌曲 ID
   --am-storefront AM_STOREFRONT
                         Apple Music 商店地区 (默认 cn)
 ```
 
-在其他 Python 脚本中调用（确保 `music_card_gen.py` 在同目录）：
+在其他 Python 脚本中调用：
 
 ```python
 import asyncio
-from music_card_gen import generate_music_card_process
+from music_card import generate_music_card_process
 
 async def my_script():
     # 调用生成函数，获取 Image 对象

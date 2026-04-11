@@ -4,7 +4,8 @@ from pathlib import Path
 
 from PIL import Image
 
-from music_card_gen import Mode, QuoteParser
+from music_card import Mode
+from music_card.parsing import QuoteParser
 
 GOLDEN_HELPER_DIR = Path(__file__).resolve().parent / "golden"
 if str(GOLDEN_HELPER_DIR) not in sys.path:

@@ -6,7 +6,7 @@ ROOT_DIR = Path(__file__).resolve().parents[2]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
-from music_card_gen import Mode
+from music_card import Mode
 
 from golden_utils import EXPECTED_DIR, expected_path, render_mode
 

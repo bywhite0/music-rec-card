@@ -4,15 +4,11 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from music_card_gen import (
-    DailyRecommendationService,
-    LyricsService,
-    MusicCard,
-    NcmProvider,
-    Platform,
-    QqProvider,
-    QuoteParser,
-)
+from music_card.models import Platform
+from music_card.parsing import QuoteParser
+from music_card.providers import NcmProvider, QqProvider
+from music_card.renderer import MusicCard
+from music_card.services import DailyRecommendationService, LyricsService
 
 
 class _FakeHttpClient:
@@ -131,7 +127,7 @@ class ServiceTests(unittest.IsolatedAsyncioTestCase):
         client = _FakeHttpClient()
         client.text_response = (200, "<tt></tt>")
 
-        with patch("music_card_gen.TTML") as mock_ttml:
+        with patch("music_card.services.TTML") as mock_ttml:
             mock_ttml.return_value.text = "line1\nline2"
             text = await LyricsService().fetch("123", Platform.NCM, client)
 
@@ -142,7 +138,7 @@ class CliIntegrationTests(unittest.TestCase):
     def test_cli_returns_nonzero_without_song_inputs(self):
         repo = Path(__file__).resolve().parents[1]
         proc = subprocess.run(
-            [sys.executable, "music_card_gen.py", "--mode", "card"],
+            [sys.executable, "-m", "music_card", "--mode", "card"],
             cwd=repo,
             capture_output=True,
             text=True,

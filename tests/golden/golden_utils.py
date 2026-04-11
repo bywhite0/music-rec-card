@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 from PIL import Image, ImageChops, ImageDraw, ImageFont
 
-from music_card_gen import CardPayload, Mode, MusicCard, Platform
+from music_card import CardPayload, Mode, MusicCard, Platform
 
 GOLDEN_DIR = Path(__file__).resolve().parent
 EXPECTED_DIR = GOLDEN_DIR / "expected"
@@ -117,7 +117,7 @@ async def render_mode(mode: Mode) -> Image.Image:
     show_qrcode = mode in {Mode.DAILY, Mode.CARD}
 
     with patch.object(MusicCard, "_cached_font", staticmethod(_golden_font_loader)):
-        with patch("music_card_gen.download_image_with_fallback", side_effect=_fake_download_image):
+        with patch("music_card.assets.download_image_with_fallback", side_effect=_fake_download_image):
             image = await card.generate(
                 payload,
                 inner_blurred=True,
