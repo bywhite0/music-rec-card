@@ -705,7 +705,8 @@ class MusicCard:
         )
 
         if ratio > 0:
-            played_right = bar_left + (bar_width * ratio)
+            played_width = max(bar_height, bar_width * ratio)
+            played_right = bar_left + played_width
             draw.rounded_rectangle(
                 (bar_left, bar_top, played_right, bar_bottom),
                 radius=radius,
