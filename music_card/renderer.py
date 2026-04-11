@@ -130,30 +130,46 @@ class MusicCard:
     @staticmethod
     def get_dominant_color(image: Image.Image) -> tuple[int, int, int]:
         """通过 1x1 缩放提取主色。"""
-        return image.copy().resize((1, 1), resample=Image.Resampling.HAMMING).getpixel((0, 0))
+        return MusicCard._sample_average_rgb(image)
+
+    @staticmethod
+    def _sample_average_rgb(image: Image.Image) -> tuple[int, int, int]:
+        """通过 1x1 缩放提取区域平均颜色。"""
+        return image.resize((1, 1), resample=Image.Resampling.HAMMING).getpixel((0, 0))
+
+    @staticmethod
+    def _blend_rgb(c1: tuple[int, int, int], c2: tuple[int, int, int], ratio: float) -> tuple[int, int, int]:
+        """按比例混合两种 RGB 颜色。"""
+        return tuple(int(c1[i] * (1 - ratio) + c2[i] * ratio) for i in range(3))
+
+    @staticmethod
+    def _adjust_rgb(color: tuple[int, int, int], factor: float) -> tuple[int, int, int]:
+        """按倍率调节颜色亮度并限制在合法范围。"""
+        return tuple(min(255, max(0, int(channel * factor))) for channel in color)
+
+    @staticmethod
+    def _get_perceived_luminance(rgb: tuple[int, int, int]) -> float:
+        """计算感知亮度（YIQ 近似）。"""
+        return (rgb[0] * 299 + rgb[1] * 587 + rgb[2] * 114) / 1000
 
     @staticmethod
     def get_adaptive_month_color(bg_sample: Image.Image, theme_rgb: tuple[int, int, int]) -> tuple[int, int, int]:
         """根据背景亮度调整月份文字颜色。"""
-        bg_color = bg_sample.resize((1, 1), resample=Image.Resampling.HAMMING).getpixel((0, 0))
-        bg_lum = (bg_color[0] * 299 + bg_color[1] * 587 + bg_color[2] * 114) / 1000
-
-        def adjust(color: tuple[int, int, int], factor: float) -> tuple[int, int, int]:
-            return tuple(min(255, max(0, int(i * factor))) for i in color)
-
-        return adjust(theme_rgb, 0.6) if bg_lum > 140 else adjust(theme_rgb, 1.8)
+        bg_color = MusicCard._sample_average_rgb(bg_sample)
+        bg_lum = MusicCard._get_perceived_luminance(bg_color)
+        return MusicCard._adjust_rgb(theme_rgb, 0.6) if bg_lum > 140 else MusicCard._adjust_rgb(theme_rgb, 1.8)
 
     @staticmethod
     def get_adaptive_deco_color(bg_sample: Image.Image, theme_rgb: tuple[int, int, int]) -> tuple[int, int, int]:
         """根据背景亮度调整装饰引号颜色。"""
-        bg_color = bg_sample.resize((1, 1), resample=Image.Resampling.HAMMING).getpixel((0, 0))
-        bg_lum = (bg_color[0] * 299 + bg_color[1] * 587 + bg_color[2] * 114) / 1000
-
-        def blend(c1: tuple[int, int, int], c2: tuple[int, int, int], ratio: float) -> tuple[int, int, int]:
-            return tuple(int(c1[i] * (1 - ratio) + c2[i] * ratio) for i in range(3))
-
+        bg_color = MusicCard._sample_average_rgb(bg_sample)
+        bg_lum = MusicCard._get_perceived_luminance(bg_color)
         white = (255, 255, 255)
-        return blend(theme_rgb, white, 0.2) if bg_lum > 150 else blend(theme_rgb, white, 0.6)
+        return (
+            MusicCard._blend_rgb(theme_rgb, white, 0.2)
+            if bg_lum > 150
+            else MusicCard._blend_rgb(theme_rgb, white, 0.6)
+        )
 
     @classmethod
     def get_now_playing_progress_colors(
@@ -162,31 +178,25 @@ class MusicCard:
         theme_rgb: tuple[int, int, int],
     ) -> tuple[tuple[int, int, int], tuple[int, int, int]]:
         """基于二维码配色算法计算进度条颜色（已播放、未播放）。"""
-        bg_color = bg_sample.resize((1, 1), resample=Image.Resampling.HAMMING).getpixel((0, 0))
-
-        def blend(c1: tuple[int, int, int], c2: tuple[int, int, int], ratio: float) -> tuple[int, int, int]:
-            return tuple(int(c1[i] * (1 - ratio) + c2[i] * ratio) for i in range(3))
-
-        def adjust(color: tuple[int, int, int], factor: float) -> tuple[int, int, int]:
-            return tuple(min(255, max(0, int(channel * factor))) for channel in color)
+        bg_color = cls._sample_average_rgb(bg_sample)
 
         # 先对两段颜色都应用二维码配色收敛逻辑。
         white = (255, 255, 255)
-        played_seed = blend(theme_rgb, bg_color, 0.18)
-        unplayed_seed = blend(theme_rgb, white, 0.46)
+        played_seed = cls._blend_rgb(theme_rgb, bg_color, 0.18)
+        unplayed_seed = cls._blend_rgb(theme_rgb, white, 0.46)
         played_color = cls.get_safe_qr_color(played_seed, bg_color)
         unplayed_color = cls.get_safe_qr_color(unplayed_seed, bg_color)
 
         # 再拉开亮度差：已播放更深，未播放更浅。
-        played_color = adjust(played_color, 0.78)
-        unplayed_color = adjust(unplayed_color, 1.24)
+        played_color = cls._adjust_rgb(played_color, 0.78)
+        unplayed_color = cls._adjust_rgb(unplayed_color, 1.24)
 
         # 若层次仍不足，继续分离亮度，确保视觉层次明显。
         for _ in range(3):
             if cls._get_contrast_ratio(played_color, unplayed_color) >= 1.35:
                 break
-            played_color = adjust(played_color, 0.90)
-            unplayed_color = adjust(unplayed_color, 1.08)
+            played_color = cls._adjust_rgb(played_color, 0.90)
+            unplayed_color = cls._adjust_rgb(unplayed_color, 1.08)
 
         # 保证已播放整体不比未播放更亮。
         if cls._get_relative_luminance(played_color) > cls._get_relative_luminance(unplayed_color):
@@ -197,8 +207,8 @@ class MusicCard:
     @staticmethod
     def get_contrasting_text_color(region_image: Image.Image) -> str:
         """为指定区域选择高对比文本颜色。"""
-        color = region_image.resize((1, 1), resample=Image.Resampling.HAMMING).getpixel((0, 0))
-        lum = (color[0] * 299 + color[1] * 587 + color[2] * 114) / 1000
+        color = MusicCard._sample_average_rgb(region_image)
+        lum = MusicCard._get_perceived_luminance(color)
         return "#4a3b32" if lum > 120 else "#f2f2f2"
 
     @staticmethod
