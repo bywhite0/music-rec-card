@@ -9,13 +9,10 @@
 from __future__ import annotations
 
 import argparse
-import json
 import logging
 from datetime import datetime
-from typing import Any
 
-from .http_client import HttpClient
-from .models import CardRequest, Mode, NowPlayingData, QuoteData, SongInfo
+from .models import CardRequest, Mode, QuoteData, SongInfo
 from .providers import coerce_mode, coerce_platform
 from .usecases import generate_card
 
@@ -45,83 +42,6 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _pick_value(payload: dict[str, Any], *keys: str) -> Any:
-    for key in keys:
-        if key in payload:
-            return payload[key]
-    return None
-
-
-def _parse_int_field(payload: dict[str, Any], field_name: str, *aliases: str) -> int:
-    raw_value = _pick_value(payload, *aliases)
-    if raw_value is None:
-        raise ValueError(f"缺少字段: {field_name}")
-    if isinstance(raw_value, bool):
-        raise ValueError(f"{field_name} 必须是整数")
-    try:
-        return int(raw_value)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f"{field_name} 必须是整数") from exc
-
-
-def _parse_text_field(payload: dict[str, Any], field_name: str, *aliases: str) -> str:
-    raw_value = _pick_value(payload, *aliases)
-    if raw_value is None:
-        raise ValueError(f"缺少字段: {field_name}")
-    if not isinstance(raw_value, str):
-        raise ValueError(f"{field_name} 必须是字符串")
-    normalized = raw_value.strip()
-    if not normalized:
-        raise ValueError(f"{field_name} 不能为空")
-    return normalized
-
-
-def parse_now_playing_json(raw_json: str) -> NowPlayingData:
-    """解析并校验 now-playing JSON 输入。"""
-    try:
-        payload = json.loads(raw_json)
-    except json.JSONDecodeError as exc:
-        raise ValueError("now-playing JSON 解析失败") from exc
-
-    if not isinstance(payload, dict):
-        raise ValueError("now-playing JSON 必须是对象")
-
-    progress_ms = _parse_int_field(payload, "progress", "progress_ms", "progress")
-    duration_ms = _parse_int_field(payload, "duration", "duration_ms", "duration")
-    if duration_ms <= 0:
-        raise ValueError("duration 必须大于 0")
-
-    track = _parse_text_field(payload, "track", "track", "title")
-    artist = _parse_text_field(payload, "artist", "artist")
-    cover_url = _parse_text_field(payload, "coverUrl", "cover_url", "coverUrl")
-
-    song_url = _pick_value(payload, "song_url", "url")
-    if song_url is not None:
-        if not isinstance(song_url, str):
-            raise ValueError("url 必须是字符串")
-        song_url = song_url.strip() or None
-
-    return NowPlayingData(
-        progress_ms=progress_ms,
-        duration_ms=duration_ms,
-        track=track,
-        artist=artist,
-        cover_url=cover_url,
-        song_url=song_url,
-    )
-
-
-async def fetch_now_playing_json_from_url(data_url: str) -> str:
-    """从 URL 拉取 now-playing JSON 文本。"""
-    async with HttpClient(timeout=10, trust_env=True) as http_client:
-        status, text = await http_client.get_text(data_url)
-    if status != 200:
-        raise ValueError(f"now-playing 数据 URL 请求失败: HTTP {status}")
-    if not text.strip():
-        raise ValueError("now-playing 数据 URL 返回为空")
-    return text
-
-
 async def main() -> None:
     """执行 CLI 主流程。"""
     args = build_parser().parse_args()
@@ -140,18 +60,6 @@ async def main() -> None:
     if args.quote and len(args.quote) == 2:
         quote = QuoteData(content=args.quote[0], source=args.quote[1])
 
-    now_playing = None
-    if args.now_playing_data_url or args.now_playing_json:
-        try:
-            if args.now_playing_data_url:
-                raw_json = await fetch_now_playing_json_from_url(args.now_playing_data_url)
-            else:
-                raw_json = args.now_playing_json
-            now_playing = parse_now_playing_json(raw_json)
-        except ValueError as exc:
-            logger.error("错误: %s", exc)
-            raise SystemExit(1)
-
     request = CardRequest(
         platform=coerce_platform(args.platform),
         mode=coerce_mode(args.mode),
@@ -159,7 +67,8 @@ async def main() -> None:
         music_id=args.music_id,
         song_info=song_info,
         quote=quote,
-        now_playing=now_playing,
+        now_playing_json=args.now_playing_json,
+        now_playing_data_url=args.now_playing_data_url,
         inner_blurred=args.inner_blurred,
         show_qrcode=args.qrcode,
         font_path="PingFang.ttc",

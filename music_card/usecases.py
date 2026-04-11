@@ -18,7 +18,7 @@ from .http_client import HttpClient
 from .models import CardPayload, CardRequest, CardResult, Mode, NowPlayingData, QuoteData, SongInfo
 from .providers import coerce_mode, coerce_platform, get_song_provider
 from .renderer import MusicCard
-from .services import DailyRecommendationService, LyricsService
+from .services import DailyRecommendationService, LyricsService, NowPlayingService
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +83,21 @@ def _build_now_playing_payload(
     return payload, None
 
 
+async def _resolve_now_playing_data(req: CardRequest, http_client: HttpClient) -> tuple[Optional[NowPlayingData], Optional[str]]:
+    """按优先级解析 now-playing 数据：URL > JSON > 对象。"""
+    service = NowPlayingService()
+    try:
+        if req.now_playing_data_url:
+            return await service.fetch_from_url(req.now_playing_data_url, http_client), None
+        if req.now_playing_json:
+            return service.parse_json(req.now_playing_json), None
+        if req.now_playing:
+            return req.now_playing, None
+        return None, "错误: now-playing 模式需要提供 now playing 数据"
+    except ValueError as exc:
+        return None, f"错误: {exc}"
+
+
 async def generate_card(req: CardRequest) -> CardResult:
     """高层入口：根据请求生成卡片。
 
@@ -110,7 +125,15 @@ async def generate_card(req: CardRequest) -> CardResult:
     try:
         async with HttpClient(timeout=15, trust_env=True) as http_client:
             if mode == Mode.NOW_PLAYING:
-                payload, error_message = _build_now_playing_payload(req.now_playing, date_obj, req.music_id)
+                now_playing_data, resolve_error = await _resolve_now_playing_data(req, http_client)
+                if now_playing_data is None:
+                    return CardResult(
+                        success=False,
+                        error_code="NOW_PLAYING_INVALID",
+                        message=resolve_error or "错误: now-playing 数据无效",
+                    )
+
+                payload, error_message = _build_now_playing_payload(now_playing_data, date_obj, req.music_id)
                 if payload is None:
                     return CardResult(
                         success=False,
@@ -250,6 +273,8 @@ async def generate_music_card_process(
     font_path: str = "PingFang.ttc",
     am_storefront: str = "cn",
     now_playing_arg: Optional[NowPlayingData] = None,
+    now_playing_json_arg: Optional[str] = None,
+    now_playing_data_url_arg: Optional[str] = None,
 ) -> Optional[tuple[Image.Image, str]]:
     """对外友好的流程入口，返回 `(image, music_id)`。"""
     song_info = None
@@ -273,6 +298,8 @@ async def generate_music_card_process(
         song_info=song_info,
         quote=quote,
         now_playing=now_playing_arg,
+        now_playing_json=now_playing_json_arg,
+        now_playing_data_url=now_playing_data_url_arg,
         inner_blurred=inner_blurred,
         show_qrcode=show_qrcode,
         font_path=font_path,

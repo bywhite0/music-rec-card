@@ -9,12 +9,11 @@ from unittest.mock import patch
 
 from PIL import Image
 
-from music_card.cli import parse_now_playing_json
 from music_card.models import Mode, Platform
 from music_card.parsing import QuoteParser
 from music_card.providers import NcmProvider, QqProvider, coerce_mode
 from music_card.renderer import MusicCard
-from music_card.services import DailyRecommendationService, LyricsService
+from music_card.services import DailyRecommendationService, LyricsService, NowPlayingService
 
 
 class _FakeHttpClient:
@@ -60,7 +59,7 @@ class ModeCoerceTests(unittest.TestCase):
 
 class NowPlayingJsonTests(unittest.TestCase):
     def test_parse_now_playing_json_success(self):
-        data = parse_now_playing_json(
+        data = NowPlayingService.parse_json(
             '{"progress":13282,"duration":218608,"track":"謳歌爛漫","artist":"スリーズブーケ","coverUrl":"x","url":"https://open.spotify.com/track/abc"}'
         )
         self.assertEqual(data.progress_ms, 13282)
@@ -71,11 +70,11 @@ class NowPlayingJsonTests(unittest.TestCase):
 
     def test_parse_now_playing_json_missing_required_field(self):
         with self.assertRaises(ValueError):
-            parse_now_playing_json('{"duration":218608,"track":"Song","artist":"Artist","coverUrl":"x"}')
+            NowPlayingService.parse_json('{"duration":218608,"track":"Song","artist":"Artist","coverUrl":"x"}')
 
     def test_parse_now_playing_json_invalid_duration(self):
         with self.assertRaises(ValueError):
-            parse_now_playing_json('{"progress":1000,"duration":0,"track":"Song","artist":"Artist","coverUrl":"x"}')
+            NowPlayingService.parse_json('{"progress":1000,"duration":0,"track":"Song","artist":"Artist","coverUrl":"x"}')
 
 
 class ColorSafetyTests(unittest.TestCase):

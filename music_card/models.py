@@ -116,6 +116,8 @@ class CardRequest:
     song_info: Optional[SongInfo] = None
     quote: Optional[QuoteData] = None
     now_playing: Optional[NowPlayingData] = None
+    now_playing_json: Optional[str] = None
+    now_playing_data_url: Optional[str] = None
     inner_blurred: bool = False
     show_qrcode: bool = False
     font_path: str = "PingFang.ttc"
