@@ -100,7 +100,7 @@ class NowPlayingService:
 
     @classmethod
     def _parse_int_field(cls, payload: dict[str, Any], field_name: str, *aliases: str) -> int:
-        raw_value = cls._pick_value(payload, *aliases)
+        raw_value = cls._pick_value(payload, field_name, *aliases)
         if raw_value is None:
             raise ValueError(f"缺少字段: {field_name}")
         if isinstance(raw_value, bool):
@@ -112,7 +112,7 @@ class NowPlayingService:
 
     @classmethod
     def _parse_text_field(cls, payload: dict[str, Any], field_name: str, *aliases: str) -> str:
-        raw_value = cls._pick_value(payload, *aliases)
+        raw_value = cls._pick_value(payload, field_name, *aliases)
         if raw_value is None:
             raise ValueError(f"缺少字段: {field_name}")
         if not isinstance(raw_value, str):
@@ -125,14 +125,14 @@ class NowPlayingService:
     @classmethod
     def parse_payload(cls, payload: dict[str, Any]) -> NowPlayingData:
         """解析并校验 now-playing 字典结构。"""
-        progress_ms = cls._parse_int_field(payload, "progress", "progress_ms", "progress")
-        duration_ms = cls._parse_int_field(payload, "duration", "duration_ms", "duration")
+        progress_ms = cls._parse_int_field(payload, "progress", "progress_ms")
+        duration_ms = cls._parse_int_field(payload, "duration", "duration_ms")
         if duration_ms <= 0:
             raise ValueError("duration 必须大于 0")
 
-        track = cls._parse_text_field(payload, "track", "track", "title")
-        artist = cls._parse_text_field(payload, "artist", "artist")
-        cover_url = cls._parse_text_field(payload, "coverUrl", "cover_url", "coverUrl")
+        track = cls._parse_text_field(payload, "track", "title")
+        artist = cls._parse_text_field(payload, "artist")
+        cover_url = cls._parse_text_field(payload, "coverUrl", "cover_url")
 
         song_url = cls._pick_value(payload, "song_url", "url")
         if song_url is not None:
