@@ -177,30 +177,41 @@ class MusicCard:
         bg_sample: Image.Image,
         theme_rgb: tuple[int, int, int],
     ) -> tuple[tuple[int, int, int], tuple[int, int, int]]:
-        """基于二维码配色算法计算进度条颜色（已播放、未播放）。"""
+        """基于装饰引号色 + 二维码对比度算法计算进度条颜色（已播放、未播放）。"""
         bg_color = cls._sample_average_rgb(bg_sample)
+        deco_color = cls.get_adaptive_deco_color(bg_sample, theme_rgb)
 
-        # 先对两段颜色都应用二维码配色收敛逻辑。
+        # 先围绕装饰引号色生成种子，再应用二维码同款对比度收敛逻辑。
         white = (255, 255, 255)
-        played_seed = cls._blend_rgb(theme_rgb, bg_color, 0.18)
-        unplayed_seed = cls._blend_rgb(theme_rgb, white, 0.46)
+        played_seed = cls._blend_rgb(deco_color, bg_color, 0.20)
+        unplayed_seed = cls._blend_rgb(deco_color, white, 0.34)
         played_color = cls.get_safe_qr_color(played_seed, bg_color)
         unplayed_color = cls.get_safe_qr_color(unplayed_seed, bg_color)
 
-        # 再拉开亮度差：已播放更深，未播放更浅。
-        played_color = cls._adjust_rgb(played_color, 0.78)
-        unplayed_color = cls._adjust_rgb(unplayed_color, 1.24)
+        # 将两段颜色再向装饰引号色收拢，提升视觉风格一致性。
+        played_color = cls._blend_rgb(played_color, deco_color, 0.78)
+        unplayed_color = cls._blend_rgb(unplayed_color, deco_color, 0.80)
+
+        # 拉开亮度差：已播放更深，未播放更浅。
+        played_color = cls._adjust_rgb(played_color, 0.98)
+        unplayed_color = cls._adjust_rgb(unplayed_color, 1.06)
 
         # 若层次仍不足，继续分离亮度，确保视觉层次明显。
-        for _ in range(3):
-            if cls._get_contrast_ratio(played_color, unplayed_color) >= 1.35:
+        for _ in range(4):
+            if cls._get_contrast_ratio(played_color, unplayed_color) >= 1.30:
                 break
-            played_color = cls._adjust_rgb(played_color, 0.90)
-            unplayed_color = cls._adjust_rgb(unplayed_color, 1.08)
+            played_color = cls._adjust_rgb(played_color, 0.97)
+            unplayed_color = cls._adjust_rgb(unplayed_color, 1.03)
 
         # 保证已播放整体不比未播放更亮。
         if cls._get_relative_luminance(played_color) > cls._get_relative_luminance(unplayed_color):
             played_color, unplayed_color = unplayed_color, played_color
+
+        # 保证与背景保持最低可分辨度（轻量兜底）。
+        if cls._get_contrast_ratio(played_color, bg_color) < 1.08:
+            played_color = cls._adjust_rgb(played_color, 0.96)
+        if cls._get_contrast_ratio(unplayed_color, bg_color) < 1.04:
+            unplayed_color = cls._adjust_rgb(unplayed_color, 0.97)
 
         return played_color, unplayed_color
 

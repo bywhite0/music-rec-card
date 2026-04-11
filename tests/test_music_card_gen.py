@@ -97,6 +97,18 @@ class ColorSafetyTests(unittest.TestCase):
         self.assertNotEqual(unplayed_a, unplayed_b)
         self.assertGreater(MusicCard._get_contrast_ratio(played_a, unplayed_a), 1.05)
 
+    def test_now_playing_progress_colors_close_to_deco_color(self):
+        bg = Image.new("RGB", (60, 20), "#f5f5f5")
+        theme = (48, 124, 212)
+        deco = MusicCard.get_adaptive_deco_color(bg, theme)
+        played, unplayed = MusicCard.get_now_playing_progress_colors(bg, theme)
+
+        def distance(c1, c2):
+            return sum(abs(c1[i] - c2[i]) for i in range(3))
+
+        self.assertLess(distance(played, deco), distance(played, theme))
+        self.assertLess(distance(unplayed, deco), distance(unplayed, theme))
+
 
 class ProviderTests(unittest.IsolatedAsyncioTestCase):
     async def test_ncm_provider_success(self):
