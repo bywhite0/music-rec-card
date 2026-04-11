@@ -18,6 +18,7 @@ MODE_TO_FILENAME: Dict[Mode, str] = {
     Mode.DAILY: "daily.png",
     Mode.CARD: "card.png",
     Mode.LYRIC: "lyric.png",
+    Mode.NOW_PLAYING: "now_playing.png",
 }
 
 
@@ -92,11 +93,13 @@ def build_payload(mode: Mode) -> CardPayload:
         Mode.DAILY: _daily_quote_sample(),
         Mode.CARD: "Card mode quote placeholder",
         Mode.LYRIC: _lyric_quote_sample(),
+        Mode.NOW_PLAYING: "",
     }
     source_by_mode = {
         Mode.DAILY: "GoldenUser",
         Mode.CARD: "CardUser",
         Mode.LYRIC: "LyricUser",
+        Mode.NOW_PLAYING: "",
     }
 
     return CardPayload(
@@ -108,6 +111,8 @@ def build_payload(mode: Mode) -> CardPayload:
         date_obj=datetime(2026, 3, 14),
         music_id="123456",
         song_url="https://example.com/song/123456",
+        progress_ms=13282 if mode == Mode.NOW_PLAYING else None,
+        duration_ms=218608 if mode == Mode.NOW_PLAYING else None,
     )
 
 

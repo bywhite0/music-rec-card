@@ -27,6 +27,7 @@ class Mode(str, Enum):
     DAILY = "daily"
     CARD = "card"
     LYRIC = "lyric"
+    NOW_PLAYING = "now-playing"
 
 
 @dataclass
@@ -46,6 +47,18 @@ class QuoteData:
 
     content: str
     source: str
+
+
+@dataclass
+class NowPlayingData:
+    """Now Playing 模式输入数据。"""
+
+    progress_ms: int
+    duration_ms: int
+    track: str
+    artist: str
+    cover_url: str
+    song_url: Optional[str] = None
 
 
 @dataclass
@@ -102,6 +115,9 @@ class CardRequest:
     music_id: Optional[str] = None
     song_info: Optional[SongInfo] = None
     quote: Optional[QuoteData] = None
+    now_playing: Optional[NowPlayingData] = None
+    now_playing_json: Optional[str] = None
+    now_playing_data_url: Optional[str] = None
     inner_blurred: bool = False
     show_qrcode: bool = False
     font_path: str = "PingFang.ttc"
@@ -160,6 +176,8 @@ class CardPayload:
     date_obj: datetime
     music_id: Optional[str]
     song_url: Optional[str] = None
+    progress_ms: Optional[int] = None
+    duration_ms: Optional[int] = None
 
 
 @dataclass

@@ -13,7 +13,7 @@ from golden_utils import EXPECTED_DIR, expected_path, render_mode
 
 async def main() -> None:
     EXPECTED_DIR.mkdir(parents=True, exist_ok=True)
-    for mode in (Mode.DAILY, Mode.CARD, Mode.LYRIC):
+    for mode in (Mode.DAILY, Mode.CARD, Mode.LYRIC, Mode.NOW_PLAYING):
         image = await render_mode(mode)
         path = expected_path(mode)
         image.save(path, format="PNG", optimize=True)

@@ -41,7 +41,7 @@ class GoldenRegressionTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(any(line.spec == "-:" for line in lyric_parsed.lines))
 
     async def test_mode_renders_match_golden(self):
-        modes = (Mode.DAILY, Mode.CARD, Mode.LYRIC)
+        modes = (Mode.DAILY, Mode.CARD, Mode.LYRIC, Mode.NOW_PLAYING)
         missing = [str(expected_path(mode)) for mode in modes if not expected_path(mode).exists()]
         if missing:
             self.fail(

@@ -23,10 +23,18 @@ def build_parser() -> argparse.ArgumentParser:
     """构建 CLI 参数解析器。"""
     parser = argparse.ArgumentParser(description="生成仿网易云音乐风格的音乐卡片")
     parser.add_argument("--platform", type=str, choices=["ncm", "qq", "am"], default="ncm", help="获取歌曲的平台 ncm/qq/am")
-    parser.add_argument("--mode", type=str, choices=["daily", "card", "lyric"], default="daily", help="制卡模式")
+    parser.add_argument(
+        "--mode",
+        type=str,
+        choices=["daily", "card", "lyric", "now-playing"],
+        default="daily",
+        help="制卡模式",
+    )
     parser.add_argument("--date", type=str, default=datetime.now().strftime("%Y-%m-%d"), help="日期 YYYY-MM-DD")
     parser.add_argument("--info", nargs=3, metavar=("TITLE", "ARTIST", "COVER_URL"), help="手动指定歌曲信息")
     parser.add_argument("--quote", nargs=2, metavar=("CONTENT", "SOURCE"), help="引言内容与来源")
+    parser.add_argument("--now-playing-data-url", type=str, help="Now Playing 数据 URL")
+    parser.add_argument("--now-playing-json", type=str, help="Now Playing 数据 JSON 字符串")
     parser.add_argument("--inner-blurred", action="store_true", help="卡片内部背景模糊")
     parser.add_argument("--qrcode", action="store_true", help="生成二维码")
     parser.add_argument("--music-id", type=str, help="歌曲 ID")
@@ -59,6 +67,8 @@ async def main() -> None:
         music_id=args.music_id,
         song_info=song_info,
         quote=quote,
+        now_playing_json=args.now_playing_json,
+        now_playing_data_url=args.now_playing_data_url,
         inner_blurred=args.inner_blurred,
         show_qrcode=args.qrcode,
         font_path="PingFang.ttc",
@@ -78,6 +88,8 @@ async def main() -> None:
             filename = f"music_card_{music_id}.png"
         case Mode.DAILY:
             filename = f"music_card_{args.date}.png"
+        case Mode.NOW_PLAYING:
+            filename = f"music_now_playing_{music_id}.png"
 
     result.image.save(filename)
     logger.info("图片保存成功: %s", filename)

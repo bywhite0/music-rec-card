@@ -218,7 +218,10 @@ def coerce_mode(value: Union[str, Mode]) -> Mode:
     if isinstance(value, Mode):
         return value
     try:
-        return Mode(value)
+        normalized = str(value).strip().lower().replace("_", "-")
+        if normalized == "nowplaying":
+            normalized = Mode.NOW_PLAYING.value
+        return Mode(normalized)
     except ValueError:
         logger.warning("未知模式 %s，回退到 daily", value)
         return Mode.DAILY

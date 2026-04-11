@@ -16,14 +16,17 @@
 - **daily**: 每日推荐模式，自动获取指定日期的推荐歌曲和推荐语
 - **card**: 普通卡片模式，需手动提供歌曲信息或音乐 ID
 - **lyric**: 歌词模式，自动获取歌曲歌词作为引言内容
+- **now-playing**: 基于 card 模式渲染专辑封面与歌曲信息，并显示播放进度条
 
 ### 命令行参数
 
 ```
 usage: python -m music_card [-h] [--platform {ncm,qq,am}]
-                         [--mode {daily,card,lyric}] [--date DATE]
+                         [--mode {daily,card,lyric,now-playing}] [--date DATE]
                          [--info TITLE ARTIST COVER_URL]
-                         [--quote CONTENT SOURCE] [--inner-blurred] [--qrcode]
+                         [--quote CONTENT SOURCE] [--now-playing-data-url NOW_PLAYING_DATA_URL]
+                         [--now-playing-json NOW_PLAYING_JSON]
+                         [--inner-blurred] [--qrcode]
                          [--music-id MUSIC_ID] [--am-storefront AM_STOREFRONT]
 
 生成仿网易云音乐风格的音乐卡片
@@ -32,13 +35,17 @@ options:
   -h, --help            show this help message and exit
   --platform {ncm,qq,am}
                         获取歌曲的平台 ncm/qq/am
-  --mode {daily,card,lyric}
+  --mode {daily,card,lyric,now-playing}
                         制卡模式
   --date DATE           日期 YYYY-MM-DD
   --info TITLE ARTIST COVER_URL
                         手动指定歌曲信息
   --quote CONTENT SOURCE
                         引言内容与来源
+  --now-playing-data-url NOW_PLAYING_DATA_URL
+                        Now Playing 数据 URL（优先于 --now-playing-json）
+  --now-playing-json NOW_PLAYING_JSON
+                        Now Playing 数据 JSON 字符串
   --inner-blurred       卡片内部背景模糊 (默认不启用)
   --qrcode              生成二维码 (默认不启用)
   --music-id MUSIC_ID   歌曲 ID
@@ -95,6 +102,14 @@ if __name__ == "__main__":
 
 ```plaintext
 --platform ncm --mode daily --date 2025-12-28 --quote "[:-]Frozen into icy rocks, that's how it starts\n[:_]that's how it starts\n[-:]Crumbled like the sands of time, that's how it ends\n[_:]That's how it ends\n[:-]Every page of tragedy is thrown away\n[:_]Is thrown away\n[:-:]Burned out in the flame\n[:_:]In the flame" "May all the beauty be blessed" --inner-blurred --qrcode --music-id 1859652717
+```
+
+```plaintext
+--mode now-playing --now-playing-json "{\"progress\":13282,\"duration\":218608,\"track\":\"謳歌爛漫\",\"artist\":\"スリーズブーケ\",\"isPlaying\":true,\"coverUrl\":\"https://i.scdn.co/image/ab67616d00004851df111e706f86410c5bbb8571\",\"url\":\"https://open.spotify.com/track/4LSluBoUPveQlO8lBlITCE\"}"
+```
+
+```plaintext
+--mode now-playing --now-playing-data-url "https://example.com/api/now-playing.json"
 ```
 
 ![music_card_2025-12-28](./img/README/music_card_2025-12-28.png)
