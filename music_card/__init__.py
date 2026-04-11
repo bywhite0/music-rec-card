@@ -10,6 +10,7 @@ from .models import (
     CardResult,
     CardStyle,
     Mode,
+    NowPlayingData,
     Platform,
     QuoteData,
     SongInfo,
@@ -20,6 +21,7 @@ from .usecases import generate_card, generate_music_card_process
 __all__ = [
     "Platform",
     "Mode",
+    "NowPlayingData",
     "SongInfo",
     "QuoteData",
     "CardStyle",

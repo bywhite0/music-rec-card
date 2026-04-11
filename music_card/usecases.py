@@ -15,7 +15,7 @@ from PIL import Image
 
 from .constants import AMLL_BASE_URL
 from .http_client import HttpClient
-from .models import CardPayload, CardRequest, CardResult, Mode, QuoteData, SongInfo
+from .models import CardPayload, CardRequest, CardResult, Mode, NowPlayingData, QuoteData, SongInfo
 from .providers import coerce_mode, coerce_platform, get_song_provider
 from .renderer import MusicCard
 from .services import DailyRecommendationService, LyricsService
@@ -39,6 +39,48 @@ def _parse_date_or_today(date_str: str) -> tuple[datetime, str]:
         logger.warning("⚠️ 日期格式错误 (%s)，使用今日", date_str)
         date_obj = datetime.now()
         return date_obj, date_obj.strftime("%Y-%m-%d")
+
+
+def _build_now_playing_payload(
+    now_playing: Optional[NowPlayingData],
+    date_obj: datetime,
+    fallback_music_id: Optional[str],
+) -> tuple[Optional[CardPayload], Optional[str]]:
+    """构建并校验 now-playing 的渲染载荷。"""
+    if now_playing is None:
+        return None, "错误: now-playing 模式需要提供 now playing 数据"
+
+    if not isinstance(now_playing.track, str) or not now_playing.track.strip():
+        return None, "错误: now-playing 数据缺少有效 track"
+    if not isinstance(now_playing.artist, str) or not now_playing.artist.strip():
+        return None, "错误: now-playing 数据缺少有效 artist"
+    if not isinstance(now_playing.cover_url, str) or not now_playing.cover_url.strip():
+        return None, "错误: now-playing 数据缺少有效 coverUrl"
+
+    try:
+        if isinstance(now_playing.duration_ms, bool) or isinstance(now_playing.progress_ms, bool):
+            raise ValueError("bool-is-not-int")
+        duration_ms = int(now_playing.duration_ms)
+        progress_ms = int(now_playing.progress_ms)
+    except (TypeError, ValueError):
+        return None, "错误: now-playing 的 progress/duration 必须是整数"
+
+    if duration_ms <= 0:
+        return None, "错误: now-playing 的 duration 必须大于 0"
+
+    payload = CardPayload(
+        title=now_playing.track,
+        artist=now_playing.artist,
+        cover_url=now_playing.cover_url,
+        quote_content="",
+        quote_source="",
+        date_obj=date_obj,
+        music_id=fallback_music_id or "0",
+        song_url=now_playing.song_url,
+        progress_ms=progress_ms,
+        duration_ms=duration_ms,
+    )
+    return payload, None
 
 
 async def generate_card(req: CardRequest) -> CardResult:
@@ -67,6 +109,30 @@ async def generate_card(req: CardRequest) -> CardResult:
 
     try:
         async with HttpClient(timeout=15, trust_env=True) as http_client:
+            if mode == Mode.NOW_PLAYING:
+                payload, error_message = _build_now_playing_payload(req.now_playing, date_obj, req.music_id)
+                if payload is None:
+                    return CardResult(
+                        success=False,
+                        error_code="NOW_PLAYING_INVALID",
+                        message=error_message or "错误: now-playing 数据无效",
+                    )
+
+                image = await renderer.generate(
+                    payload,
+                    inner_blurred=req.inner_blurred,
+                    show_qrcode=False,
+                    mode=mode,
+                    http_client=http_client,
+                )
+
+                return CardResult(
+                    success=True,
+                    image=image,
+                    music_id=payload.music_id or "0",
+                    message="ok",
+                )
+
             daily_data = None
             if mode == Mode.DAILY:
                 daily_data = await DailyRecommendationService().fetch(normalized_date, http_client)
@@ -183,6 +249,7 @@ async def generate_music_card_process(
     show_qrcode: bool = False,
     font_path: str = "PingFang.ttc",
     am_storefront: str = "cn",
+    now_playing_arg: Optional[NowPlayingData] = None,
 ) -> Optional[tuple[Image.Image, str]]:
     """对外友好的流程入口，返回 `(image, music_id)`。"""
     song_info = None
@@ -205,6 +272,7 @@ async def generate_music_card_process(
         music_id=music_id_arg,
         song_info=song_info,
         quote=quote,
+        now_playing=now_playing_arg,
         inner_blurred=inner_blurred,
         show_qrcode=show_qrcode,
         font_path=font_path,

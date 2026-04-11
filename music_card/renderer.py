@@ -34,6 +34,7 @@ class MusicCard:
     DAILY = Mode.DAILY.value
     CARD = Mode.CARD.value
     LYRIC = Mode.LYRIC.value
+    NOW_PLAYING = Mode.NOW_PLAYING.value
 
     Regular = 2
     Medium = 5
@@ -153,6 +154,45 @@ class MusicCard:
 
         white = (255, 255, 255)
         return blend(theme_rgb, white, 0.2) if bg_lum > 150 else blend(theme_rgb, white, 0.6)
+
+    @classmethod
+    def get_now_playing_progress_colors(
+        cls,
+        bg_sample: Image.Image,
+        theme_rgb: tuple[int, int, int],
+    ) -> tuple[tuple[int, int, int], tuple[int, int, int]]:
+        """基于二维码配色算法计算进度条颜色（已播放、未播放）。"""
+        bg_color = bg_sample.resize((1, 1), resample=Image.Resampling.HAMMING).getpixel((0, 0))
+
+        def blend(c1: tuple[int, int, int], c2: tuple[int, int, int], ratio: float) -> tuple[int, int, int]:
+            return tuple(int(c1[i] * (1 - ratio) + c2[i] * ratio) for i in range(3))
+
+        def adjust(color: tuple[int, int, int], factor: float) -> tuple[int, int, int]:
+            return tuple(min(255, max(0, int(channel * factor))) for channel in color)
+
+        # 先对两段颜色都应用二维码配色收敛逻辑。
+        white = (255, 255, 255)
+        played_seed = blend(theme_rgb, bg_color, 0.18)
+        unplayed_seed = blend(theme_rgb, white, 0.46)
+        played_color = cls.get_safe_qr_color(played_seed, bg_color)
+        unplayed_color = cls.get_safe_qr_color(unplayed_seed, bg_color)
+
+        # 再拉开亮度差：已播放更深，未播放更浅。
+        played_color = adjust(played_color, 0.78)
+        unplayed_color = adjust(unplayed_color, 1.24)
+
+        # 若层次仍不足，继续分离亮度，确保视觉层次明显。
+        for _ in range(3):
+            if cls._get_contrast_ratio(played_color, unplayed_color) >= 1.35:
+                break
+            played_color = adjust(played_color, 0.90)
+            unplayed_color = adjust(unplayed_color, 1.08)
+
+        # 保证已播放整体不比未播放更亮。
+        if cls._get_relative_luminance(played_color) > cls._get_relative_luminance(unplayed_color):
+            played_color, unplayed_color = unplayed_color, played_color
+
+        return played_color, unplayed_color
 
     @staticmethod
     def get_contrasting_text_color(region_image: Image.Image) -> str:
@@ -370,6 +410,7 @@ class MusicCard:
             "deco": self._load_font(100, self.Medium),
             "footer_center": self._load_font(32, self.Thin),
             "footer_outer": self._load_font(22, self.Regular),
+            "progress_time": self._load_font(28, self.Semibold),
         }
 
     def _measure_quote_height(
@@ -447,11 +488,16 @@ class MusicCard:
         header_section_h = 0.0
         middle_h = 0.0
 
-        # card 模式不渲染中部引言区域，daily/lyric 模式会保留中部区域。
+        # card / now-playing 模式不渲染中部引言区域，daily/lyric 模式会保留中部区域。
         if mode == Mode.CARD:
             header_section_h = header_h_real
             middle_h = 0
             footer_inner_h = 60
+        elif mode == Mode.NOW_PLAYING:
+            header_section_h = header_h_real
+            middle_h = 0
+            # 为进度条与时间标签预留空间。
+            footer_inner_h = 170
         else:
             header_section_h = header_h_real + 30 + 4 + 40
             q_x = self.CONTENT_LEFT_X + (240 if mode == Mode.DAILY else 0)
@@ -477,7 +523,7 @@ class MusicCard:
 
         cover_size = self.MAX_TEXT_W
         total_card_h = self.INNER_PAD + cover_size + header_section_h + footer_inner_h
-        if mode != Mode.CARD:
+        if mode in {Mode.DAILY, Mode.LYRIC}:
             total_card_h += 30 + middle_h
         total_img_h = int(total_card_h + self.MARGIN_TOP + self.MARGIN_BOTTOM)
 
@@ -592,6 +638,75 @@ class MusicCard:
 
         return header_start_y
 
+    @staticmethod
+    def format_duration_ms(milliseconds: int) -> str:
+        """将毫秒时长格式化为 `m:ss` 或 `h:mm:ss`。"""
+        total_seconds = max(0, int(milliseconds)) // 1000
+        hours, remain = divmod(total_seconds, 3600)
+        minutes, seconds = divmod(remain, 60)
+        if hours > 0:
+            return f"{hours}:{minutes:02d}:{seconds:02d}"
+        return f"{minutes}:{seconds:02d}"
+
+    def render_now_playing_progress(
+        self,
+        draw: ImageDraw.ImageDraw,
+        bg_img: Image.Image,
+        payload: CardPayload,
+        metrics: LayoutMetrics,
+        fonts: Dict[str, ImageFont.FreeTypeFont],
+        header_start_y: float,
+        theme_rgb: tuple[int, int, int],
+    ) -> None:
+        """绘制 now-playing 的进度条与时长文本。"""
+        duration_ms = payload.duration_ms or 0
+        progress_ms = payload.progress_ms or 0
+        if duration_ms <= 0:
+            return
+
+        clamped_progress = max(0, min(progress_ms, duration_ms))
+        ratio = clamped_progress / duration_ms
+
+        bar_left = self.CONTENT_LEFT_X
+        bar_right = self.CONTENT_RIGHT_X
+        bar_width = bar_right - bar_left
+        bar_height = 14
+        bar_top = header_start_y + metrics.header_h_real + 34
+        bar_bottom = bar_top + bar_height
+        radius = bar_height // 2
+        bar_sample = bg_img.crop((int(bar_left), int(bar_top), int(bar_right), int(bar_bottom)))
+        played_color, unplayed_color = self.get_now_playing_progress_colors(bar_sample, theme_rgb)
+
+        draw.rounded_rectangle(
+            (bar_left, bar_top, bar_right, bar_bottom),
+            radius=radius,
+            fill=unplayed_color,
+        )
+
+        if ratio > 0:
+            played_right = bar_left + (bar_width * ratio)
+            draw.rounded_rectangle(
+                (bar_left, bar_top, played_right, bar_bottom),
+                radius=radius,
+                fill=played_color,
+            )
+
+        time_y = bar_bottom + 14
+        draw.text(
+            (bar_left, time_y),
+            self.format_duration_ms(clamped_progress),
+            font=fonts["progress_time"],
+            fill=self.C_SUB,
+        )
+        self._draw_text_right(
+            draw,
+            self.format_duration_ms(duration_ms),
+            fonts["progress_time"],
+            bar_right,
+            time_y,
+            self.C_SUB,
+        )
+
     def _draw_dot_line(self, draw: ImageDraw.ImageDraw, y: float) -> None:
         """绘制横向点状分割线。"""
         for x in range(self.CONTENT_LEFT_X, self.CONTENT_RIGHT_X, 20):
@@ -611,7 +726,7 @@ class MusicCard:
     ) -> float:
         """绘制中部引言区域，并返回底部分隔线坐标。"""
         sep_y = header_start_y + metrics.header_h_real
-        if mode == Mode.CARD:
+        if mode in {Mode.CARD, Mode.NOW_PLAYING}:
             return sep_y
 
         sep_y = header_start_y + metrics.header_h_real + 30
@@ -807,6 +922,7 @@ class MusicCard:
         """执行完整渲染流程并返回最终图像。"""
         payload = _payload_from_any(data)
         safe_mode = coerce_mode(mode)
+        effective_show_qrcode = show_qrcode and safe_mode != Mode.NOW_PLAYING
 
         created_client = False
         client = http_client
@@ -828,7 +944,7 @@ class MusicCard:
                 return Image.new("RGB", (100, 100), color="red")
 
             quote_parse = QuoteParser.parse(payload.quote_content)
-            metrics = self.measure_layout(payload, safe_mode, fonts, quote_parse, show_qrcode)
+            metrics = self.measure_layout(payload, safe_mode, fonts, quote_parse, effective_show_qrcode)
             bg_img, draw = self.render_background(cover_img_raw, metrics, inner_blurred)
             header_start_y = self.render_header(
                 draw,
@@ -836,20 +952,23 @@ class MusicCard:
                 payload,
                 metrics,
                 fonts,
-                show_qrcode,
+                effective_show_qrcode,
                 theme_rgb,
             )
-            self.render_quote(
-                draw,
-                bg_img,
-                payload,
-                metrics,
-                fonts,
-                quote_parse,
-                safe_mode,
-                theme_rgb,
-                header_start_y,
-            )
+            if safe_mode == Mode.NOW_PLAYING:
+                self.render_now_playing_progress(draw, bg_img, payload, metrics, fonts, header_start_y, theme_rgb)
+            else:
+                self.render_quote(
+                    draw,
+                    bg_img,
+                    payload,
+                    metrics,
+                    fonts,
+                    quote_parse,
+                    safe_mode,
+                    theme_rgb,
+                    header_start_y,
+                )
             self.render_footer(draw, bg_img, metrics, fonts)
             return bg_img
         finally:
@@ -876,15 +995,32 @@ def _payload_from_any(data: Union[CardPayload, Dict[str, Any]]) -> CardPayload:
     """将字典/对象统一转换为 `CardPayload`。"""
     if isinstance(data, CardPayload):
         return data
+
+    def pick(*keys: str) -> Any:
+        for key in keys:
+            if key in data:
+                return data[key]
+        return None
+
     return CardPayload(
-        title=data.get("title", ""),
-        artist=data.get("artist", ""),
-        cover_url=data.get("cover_url", ""),
+        title=pick("title", "track") or "",
+        artist=pick("artist") or "",
+        cover_url=pick("cover_url", "coverUrl") or "",
         quote_content=data.get("quote_content", ""),
         quote_source=data.get("quote_source", ""),
         date_obj=data.get("date_obj", datetime.now()),
         music_id=data.get("music_id"),
-        song_url=data.get("song_url"),
+        song_url=pick("song_url", "url"),
+        progress_ms=_coerce_optional_int(pick("progress_ms", "progress")),
+        duration_ms=_coerce_optional_int(pick("duration_ms", "duration")),
     )
 
 
+def _coerce_optional_int(value: Any) -> Optional[int]:
+    """将可选值转换为 int，失败时返回 None。"""
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
