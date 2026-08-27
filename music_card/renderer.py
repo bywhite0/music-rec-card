@@ -303,19 +303,37 @@ class MusicCard:
 
         gradient = Image.new("L", (1, h))
         gradient.putdata(data)
-        return gradient.resize((w, h))
+        # 单列放大为等宽行，NEAREST 结果一致且最快。
+        return gradient.resize((w, h), Image.Resampling.NEAREST)
+
+    @staticmethod
+    @lru_cache(maxsize=32)
+    def _rounded_corner_tile(radius: int) -> Image.Image:
+        """8 倍超采样绘制单个圆角象限（左上角）。"""
+        factor = 8
+        scaled = radius * factor
+        tile = Image.new("L", (scaled, scaled), 0)
+        draw = ImageDraw.Draw(tile)
+        draw.pieslice((0, 0, scaled * 2, scaled * 2), 180, 270, fill=255)
+        return tile.resize((radius, radius), Image.Resampling.LANCZOS)
 
     @staticmethod
     def create_rounded_mask(size: tuple[int, int], radius: int) -> Image.Image:
-        """创建高质量圆角蒙版。"""
-        upscale_factor = 8
-        scaled_size = (size[0] * upscale_factor, size[1] * upscale_factor)
-        scaled_radius = radius * upscale_factor
+        """创建高质量圆角蒙版。
 
-        mask = Image.new("L", scaled_size, 0)
-        draw = ImageDraw.Draw(mask)
-        draw.rounded_rectangle((0, 0) + scaled_size, radius=scaled_radius, fill=255)
-        return mask.resize(size, Image.Resampling.LANCZOS)
+        直边无需抗锯齿，仅对四个角部做超采样，避免整图 8 倍放大的开销。
+        """
+        mask = Image.new("L", size, 255)
+        if radius <= 0:
+            return mask
+
+        w, h = size
+        tile = MusicCard._rounded_corner_tile(radius)
+        mask.paste(tile, (0, 0))
+        mask.paste(tile.transpose(Image.Transpose.FLIP_LEFT_RIGHT), (w - radius, 0))
+        mask.paste(tile.transpose(Image.Transpose.FLIP_TOP_BOTTOM), (0, h - radius))
+        mask.paste(tile.transpose(Image.Transpose.ROTATE_180), (w - radius, h - radius))
+        return mask
 
     @staticmethod
     def contains_cjk(text: str) -> bool:
@@ -573,13 +591,18 @@ class MusicCard:
         inner_blurred: bool,
     ) -> tuple[Image.Image, ImageDraw.ImageDraw]:
         """绘制背景层、卡片容器与封面图。"""
+        # 背景随后要做大半径模糊，先在低分辨率完成拟合与模糊再放大，
+        # 视觉等价，但省去全尺寸 LANCZOS 重采样与全尺寸模糊的开销。
+        scale = 4
+        small_size = (max(1, self.W // scale), max(1, metrics.total_img_h // scale))
         bg_img = ImageOps.fit(
             cover_img_raw,
-            (self.W, metrics.total_img_h),
-            method=Image.Resampling.LANCZOS,
+            small_size,
+            method=Image.Resampling.BILINEAR,
         )
-        bg_img = bg_img.filter(ImageFilter.GaussianBlur(radius=100))
+        bg_img = bg_img.filter(ImageFilter.GaussianBlur(radius=100 / scale))
         bg_img = ImageEnhance.Brightness(bg_img).enhance(0.7)
+        bg_img = bg_img.resize((self.W, metrics.total_img_h), Image.Resampling.BILINEAR)
 
         if inner_blurred:
             card_crop = bg_img.crop(
